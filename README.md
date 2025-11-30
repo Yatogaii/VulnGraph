@@ -61,6 +61,20 @@ flowchart LR
   Reporter --> Output
 ```
 
+## Run demo webserver with uv
+
+Prefer using `uv` to add dependencies and run the project without creating a second environment.
+
+```bash
+# Add aiohttp to dependencies (if not present)
+uv add aiohttp
+
+# Run the server using uv; this will use the environment managed by uv and will not create an extra venv
+uv run python -m src.main
+```
+
+See `docs/RUN_DEMO.md` for details.
+
 ## Example
 1. 给定一个资产IP，获取它的系统组件的版本号，并且使用漏洞扫描工具扫一下，获取它的基础信息。
 2. 给定一个自己写的代码项目，分析它的依赖，获取依赖的版本号。
