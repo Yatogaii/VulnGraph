@@ -1,7 +1,7 @@
 import asyncio
 from graph.state import NodeState
 
-async def run_agent_workflow_asyncly(
+async def run_agent_workflow_async(
     user_input: str,
     debug: bool = False,
     max_plan_iterations: int = 1,

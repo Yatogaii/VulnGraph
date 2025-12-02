@@ -1,12 +1,3 @@
-"""异步服务器：同时监听 HTTP 请求和标准输入（stdin）。
-
-功能说明：
- - 启动一个 aiohttp HTTP 服务器和一个后台 stdin 监听器。
- - 服务器持续运行，处理多个请求。
- - 只有明确的停止信号（stdin 输入 'stop'/'exit'/'quit' 或 HTTP `/stop`）才会关闭服务器。
-
-运行方式：`python -m src.main` 或 `python src/main.py`
-"""
 from __future__ import annotations
 
 import asyncio
@@ -14,12 +5,23 @@ import sys
 from aiohttp import web
 import logging
 
-from src.workflow import run_agent_workflow_asyncly
+from src.workflow import run_agent_workflow_async
 from src.settings import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def start_agent_workflow(user_input: str) -> None:
+    """启动异步工作流程。"""
+    asyncio.run(run_agent_workflow_async(
+        user_input=user_input,
+        debug=settings.debug,
+        max_plan_iterations=settings.max_plan_iterations,
+        max_step_num=settings.max_step_num,
+        enable_background_investigation=settings.enable_background_investigation,
+        enable_clarification=settings.enable_clarification,
+        max_clarification_rounds=settings.max_clarification_rounds,
+    ))
 
 async def create_stdin_reader() -> asyncio.StreamReader:
     """创建一个异步的 stdin reader，可被取消。"""
@@ -76,15 +78,7 @@ async def handle_stdin_command(text: str) -> None:
     elif text.lower() == 'help':
         logger.info("Available commands: status, help, stop/exit/quit")
     else:
-        asyncio.run(run_agent_workflow_asyncly(
-            user_input=text,
-            debug=settings.debug,
-            max_plan_iterations=settings.max_plan_iterations,
-            max_step_num=settings.max_step_num,
-            enable_background_investigation=settings.enable_background_investigation,
-            enable_clarification=settings.enable_clarification,
-            max_clarification_rounds=settings.max_clarification_rounds,
-        ))
+        start_agent_workflow(text)
 
 async def run_server(
     shutdown_event: asyncio.Event,
@@ -110,15 +104,7 @@ async def run_server(
     # Main api endpoint for scanner.
     async def query_handler(request: web.Request) -> web.Response:
         data = await request.json()
-        asyncio.run(run_agent_workflow_asyncly(
-            user_input=data.get('query', ''),
-            debug=settings.debug,
-            max_plan_iterations=settings.max_plan_iterations,
-            max_step_num=settings.max_step_num,
-            enable_background_investigation=settings.enable_background_investigation,
-            enable_clarification=settings.enable_clarification,
-            max_clarification_rounds=settings.max_clarification_rounds,
-        ))
+        start_agent_workflow(data.get('query', ''))
         return web.json_response({'received': data})
         
 
