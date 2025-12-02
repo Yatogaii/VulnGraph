@@ -3,13 +3,10 @@ from __future__ import annotations
 import asyncio
 import sys
 from aiohttp import web
-import logging
+from loguru import logger
 
 from src.workflow import run_agent_workflow_async
 from src.settings import settings
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 def start_agent_workflow(user_input: str) -> None:
     """启动异步工作流程。"""
@@ -58,12 +55,12 @@ async def stdin_listener(shutdown_event: asyncio.Event) -> None:
             continue
 
         if text.lower() in ('stop', 'exit', 'quit'):
-            logger.info("Received stop command via stdin: %s", text)
+            logger.info("Received stop command via stdin: {}", text)
             shutdown_event.set()
             return
 
         # 处理其他用户输入（这里可以扩展业务逻辑）
-        logger.info("Received stdin input: %s", text)
+        logger.info("Received stdin input: {}", text)
         await handle_stdin_command(text)
 
 
@@ -98,7 +95,7 @@ async def run_server(
     async def echo_handler(request: web.Request) -> web.Response:
         """示例：处理 POST 请求"""
         data = await request.json()
-        logger.info("Received data: %s", data)
+        logger.info("Received data: {}", data)
         return web.json_response({'received': data})
     
     # Main api endpoint for scanner.
@@ -120,7 +117,7 @@ async def run_server(
     
     try:
         await site.start()
-        logger.info("Server started at http://%s:%d", host, port)
+        logger.info("Server started at http://{}:{}", host, port)
         logger.info("Endpoints: GET /, POST /echo, */stop")
         
         # 持续等待直到收到关闭信号
