@@ -30,6 +30,10 @@ def PlannerNode(state: NodeState):
     """A node that plans actions based on the states of other nodes."""
     pass
 
+def UserFeedbackNode(state: NodeState):
+    """A node that handles user feedback based on their states."""
+    pass
+
 def WorkerTeamNode(state: NodeState):
     """A node that represents a team of workers handling tasks based on their states."""
     pass
