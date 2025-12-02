@@ -25,7 +25,7 @@ flowchart LR
   %% 输入部分
   subgraph Input
     CoordNode[CoordNode]
-    TriageNode[TriageNode]
+    %% TriageNode[TriageNode]
   end
 
   %% 核心 Planner & 反馈
@@ -48,8 +48,9 @@ flowchart LR
     Output[Output]
   end
 
-  %% 连接关系
-  CoordNode --> TriageNode --> Planner
+  %% 连接关系 Remove Triage for now
+  %%CoordNode --> TriageNode --> Planner
+  CoordNode --> Planner
   Planner <--> UserFeedback
 
   Planner --> Router

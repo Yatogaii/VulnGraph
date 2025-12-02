@@ -1,4 +1,3 @@
-
 """异步服务器：同时监听 HTTP 请求和标准输入（stdin）。
 
 功能说明：
@@ -14,6 +13,9 @@ import asyncio
 import sys
 from aiohttp import web
 import logging
+
+from src.workflow import run_agent_workflow_asyncly
+from src.settings import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,8 +76,15 @@ async def handle_stdin_command(text: str) -> None:
     elif text.lower() == 'help':
         logger.info("Available commands: status, help, stop/exit/quit")
     else:
-        logger.info("Unknown command: %s (type 'help' for available commands)", text)
-
+        asyncio.run(run_agent_workflow_asyncly(
+            user_input=text,
+            debug=settings.debug,
+            max_plan_iterations=settings.max_plan_iterations,
+            max_step_num=settings.max_step_num,
+            enable_background_investigation=settings.enable_background_investigation,
+            enable_clarification=settings.enable_clarification,
+            max_clarification_rounds=settings.max_clarification_rounds,
+        ))
 
 async def run_server(
     shutdown_event: asyncio.Event,
@@ -97,11 +106,27 @@ async def run_server(
         data = await request.json()
         logger.info("Received data: %s", data)
         return web.json_response({'received': data})
+    
+    # Main api endpoint for scanner.
+    async def query_handler(request: web.Request) -> web.Response:
+        data = await request.json()
+        asyncio.run(run_agent_workflow_asyncly(
+            user_input=data.get('query', ''),
+            debug=settings.debug,
+            max_plan_iterations=settings.max_plan_iterations,
+            max_step_num=settings.max_step_num,
+            enable_background_investigation=settings.enable_background_investigation,
+            enable_clarification=settings.enable_clarification,
+            max_clarification_rounds=settings.max_clarification_rounds,
+        ))
+        return web.json_response({'received': data})
+        
 
     app = web.Application()
     app.router.add_get('/', index_handler)
     app.router.add_route('*', '/stop', stop_handler)
     app.router.add_post('/echo', echo_handler)
+    app.router.add_post('/query', query_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
