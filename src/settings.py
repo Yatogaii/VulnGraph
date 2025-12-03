@@ -14,7 +14,14 @@ class Settings(BaseSettings):
     enable_clarification: Optional[bool] = None
     max_clarification_rounds: Optional[int] = None
 
+    # --- API keys ---
+    KIMI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
+    HF_TOKEN: str = ""
 
+    OLLAMA_API_URL: str = "http://localhost:11434"
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8"
