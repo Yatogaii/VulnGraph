@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from aiohttp import web
-from loguru import logger
+from src.logger import logger
 
 from src.workflow import run_agent_workflow_async
 from src.settings import settings
