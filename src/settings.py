@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     OLLAMA_API_URL: str = "http://localhost:11434"
     
+    http_proxy: Optional[str] = None
+    https_proxy: Optional[str] = None
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8"

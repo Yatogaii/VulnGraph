@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from loguru import logger as _logger
 
-from src.settings import settings
+from settings import settings
 
 # Configure a single Loguru logger instance for the entire project
 _logger.remove()

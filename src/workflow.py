@@ -2,6 +2,8 @@ import asyncio
 from graph.state import NodeState
 from graph.builder import graph
 
+from logger import logger
+
 async def run_agent_workflow_async(
     user_input: str,
     debug: bool = False,
@@ -12,6 +14,8 @@ async def run_agent_workflow_async(
     max_clarification_rounds: int | None = None,
     initial_state: NodeState | None = None,
 ) -> None:
+    logger.info(f"Starting agent workflow with input: {user_input}")
+
     if initial_state is None:
         initial_state = NodeState(
             user_input=user_input,

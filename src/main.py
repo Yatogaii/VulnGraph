@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import sys
 from aiohttp import web
-from src.logger import logger
+from logger import logger
 
-from src.workflow import run_agent_workflow_async
-from src.settings import settings
+from workflow import run_agent_workflow_async
+from settings import settings
 
-def start_agent_workflow(user_input: str) -> None:
+
+async def start_agent_workflow(user_input: str) -> None:
     """启动异步工作流程。"""
-    asyncio.run(run_agent_workflow_async(
+    logger.info("Starting agent workflow for input: {}", user_input)
+    await run_agent_workflow_async(
         user_input=user_input,
         debug=settings.debug,
         max_plan_iterations=settings.max_plan_iterations,
@@ -18,7 +20,7 @@ def start_agent_workflow(user_input: str) -> None:
         enable_background_investigation=settings.enable_background_investigation,
         enable_clarification=settings.enable_clarification,
         max_clarification_rounds=settings.max_clarification_rounds,
-    ))
+    )
 
 async def create_stdin_reader() -> asyncio.StreamReader:
     """创建一个异步的 stdin reader，可被取消。"""
@@ -75,7 +77,7 @@ async def handle_stdin_command(text: str) -> None:
     elif text.lower() == 'help':
         logger.info("Available commands: status, help, stop/exit/quit")
     else:
-        start_agent_workflow(text)
+        await start_agent_workflow(text)
 
 async def run_server(
     shutdown_event: asyncio.Event,
@@ -101,7 +103,7 @@ async def run_server(
     # Main api endpoint for scanner.
     async def query_handler(request: web.Request) -> web.Response:
         data = await request.json()
-        start_agent_workflow(data.get('query', ''))
+        await start_agent_workflow(data.get('query', ''))
         return web.json_response({'received': data})
         
 
