@@ -1,10 +1,10 @@
-from typing import TypedDict, List, Optional
-from langgraph.graph.message import AnyMessage
-
-class NodeState(TypedDict):
-    id: str
+from typing import List, Optional
+from langgraph.graph import MessagesState
+class NodeState(MessagesState):
+    user_input: str
     label: str
     status: str
     goto: Optional[str]
-    messages: List[AnyMessage]
     vulns: List[str]
+
+    final_report: str
