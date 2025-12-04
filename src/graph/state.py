@@ -1,5 +1,6 @@
 from typing import List, Optional, Any
 from langgraph.graph import MessagesState
+from graph.plans import Plan
 class NodeState(MessagesState):
     user_input: str
     label: str
@@ -8,6 +9,7 @@ class NodeState(MessagesState):
     vulns: List[str]
 
     plan_iterations: int
+    plan: Optional[Plan]
 
     final_report: str
     

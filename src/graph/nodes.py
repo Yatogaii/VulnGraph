@@ -1,5 +1,5 @@
 from graph.state import NodeState, preserve_state_meta_fields
-from graph.plans import parse_plan_from_llm
+from graph.plans import parse_plan_from_llm, Plan
 from typing import Annotated
 from prompts.template import apply_prompt_template
 from models import get_model_by_type
@@ -96,6 +96,8 @@ def PlannerNode(state: NodeState):
 
     msgs = state["messages"]
     msgs += [SystemMessage(content=f"Current plan iteration: {plan_iterations + 1}, max allowed: {settings.max_plan_iterations}", name="PlannerNode")]
+    if plan_iterations > 0:
+        msgs += [SystemMessage(content=f"Previous plan: {state['plan']}", name="PlannerNode")]
 
     plan_iterations += 1    
     state["plan_iterations"] = plan_iterations
@@ -112,16 +114,16 @@ def PlannerNode(state: NodeState):
     if isinstance(response.content, str):
         plan = parse_plan_from_llm(response.content)
     
-    msgs += [AIMessage(content=response.content, name="PlannerNode")]
 
     # Check for tool calls to end planning
     goto = "PlannerNode"
-    if plan:
+    if isinstance(plan, Plan) and plan.has_enough_context:
         goto = "ReporterNode"
     
     return Command(
         update={
-            "messages": msgs,
+            "plan_iterations": plan_iterations,
+            "plan": plan,
         },
         goto=goto,
     )
@@ -144,5 +146,4 @@ def VulnAnalyzerNode(state: NodeState):
 
 def ReporterNode(state: NodeState):
     """A node that generates reports based on the states of other nodes."""
-
-    return {"final_report": state["messages"]}
+    pass
