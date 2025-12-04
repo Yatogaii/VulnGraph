@@ -9,7 +9,7 @@ from graph.nodes import (
     VulnAnalyzerNode,
     ReporterNode
 )
-from graph.plans import Plan
+from types.plans import Plan
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
