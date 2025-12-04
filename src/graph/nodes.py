@@ -9,7 +9,7 @@ from tools.vuln_analyzer import get_cve_details
 
 from langchain_core.tools import tool
 from langgraph.types import Command
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from settings import settings
 
@@ -141,9 +141,60 @@ def AssetsAnalzerNode(state: NodeState):
     """A node that analyzes assets based on their states."""
     pass
 
+@tool
+def search_ddgs_tool(query: str):
+    """Search for a topic using DuckDuckGo."""
+    return search_topic_by_ddgs(query)
+
+@tool
+def search_cve_tool(cve_id: str):
+    """Search for a CVE by ID using NVD."""
+    return get_cve_details(cve_id)
+
 def VulnAnalyzerNode(state: NodeState):
     """A node that analyzes vulnerabilities based on their states."""
-    pass
+    prompt = apply_prompt_template("vuln_analyzer", state)
+    
+    tools = [search_ddgs_tool, search_cve_tool]
+    tool_map = {t.name: t for t in tools}
+    
+    model = get_model_by_type("agentic").bind_tools(tools)
+    
+    messages = prompt
+    final_response = None
+
+    # Simple ReAct loop
+    for _ in range(5):
+        response = model.invoke(messages)
+        messages.append(response)
+        final_response = response
+        
+        if not response.tool_calls:
+            break
+            
+        for tool_call in response.tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_id = tool_call["id"]
+            
+            if tool_name in tool_map:
+                try:
+                    tool_result = tool_map[tool_name].invoke(tool_args)
+                except Exception as e:
+                    tool_result = f"Error executing tool {tool_name}: {e}"
+            else:
+                tool_result = f"Tool {tool_name} not found."
+                
+            messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
+    
+    content = final_response.content if final_response else "No analysis generated."
+
+    return Command(
+        update={
+            "messages": [HumanMessage(content=content, name="VulnAnalyzerNode")]
+        },
+        goto="PlannerNode"
+    )
 
 def ReporterNode(state: NodeState):
     """A node that generates reports based on the states of other nodes."""
