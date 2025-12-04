@@ -37,21 +37,22 @@ The successful security plan must meet these standards:
 
 Before creating a detailed plan, assess if there is sufficient context to proceed:
 
-1. **Sufficient Context** (apply strict criteria):
-   - Set `has_enough_context` to true ONLY IF ALL of these conditions are met:
-     - Target assets are clearly identified (IPs, domains, repositories, etc.)
-     - Scope of analysis is well-defined
-     - Required vulnerability information (CVE IDs, descriptions) is available
-     - No clarification is needed from the user
-   - Even if 90% certain, prefer to gather more information
+1. **Sufficient Context** (Problem Solved):
+   - Set `has_enough_context` to true ONLY IF you have gathered all necessary information to answer the user's request and can proceed directly to the final report.
+   - This means no further analysis or worker execution is needed.
+   - If `has_enough_context` is true, the system will transition to the **Reporter** to generate the final output.
 
-2. **Insufficient Context** (default assumption):
-   - Set `has_enough_context` to false if ANY of these conditions exist:
-     - Target assets are not clearly specified
-     - Vulnerability details are incomplete or ambiguous
-     - Scope of the security assessment is unclear
-     - Additional user input is needed for clarification
-   - When in doubt, err on the side of requesting clarification
+2. **Insufficient Context** (Need Analysis):
+   - Set `has_enough_context` to false if you need to perform more analysis, gather data, or verify vulnerabilities.
+   - In this case, you must generate a plan (set of steps) for the workers to execute.
+
+## Plan Completion Status
+
+You must also determine if the plan generation is complete for this iteration:
+
+- Set `finish_plan` to **true** if you have generated a complete, actionable plan that is ready to be executed by the worker team.
+- Set `finish_plan` to **false** if you are still in the process of formulating the plan and need another iteration to refine it (e.g., the plan is too complex and you want to break it down further in the next thought process).
+- Note: If `has_enough_context` is true, `finish_plan` should typically be true as well, as you are done.
 
 ## Step Types
 
@@ -156,18 +157,10 @@ Choose the most efficient execution order based on the goal:
 
 ## Plan Iteration Control
 
-- You will receive two prompt variables at runtime: `CURRENT_PLAN_ITERATION` and `MAX_PLAN_ITERATIONS` (or the equivalent templated values). Use them strictly to decide whether to continue planning or to end planning.
- - You will receive two prompt variables at runtime: `CURRENT_PLAN_ITERATION` and `MAX_PLAN_ITERATIONS` (or the equivalent templated values). `CURRENT_PLAN_ITERATION` represents how many iterations have already occurred (starting at 0). Use them strictly to decide whether to continue planning or to end planning.
-- If `CURRENT_PLAN_ITERATION` >= `MAX_PLAN_ITERATIONS`, you MUST end planning (call the `end_planning()` tool) and handoff to the `WorkerTeam` or `Reporter` node as appropriate. Do not produce additional iterative steps in this case.
-- If `CURRENT_PLAN_ITERATION` < `MAX_PLAN_ITERATIONS`, evaluate if additional iteration is necessary:
-  - If the plan is already complete and actionable, you MAY end planning early by calling `end_planning()`.
-  - If further refinement is needed, produce the next iteration's steps but keep the plan concise and prioritized. Avoid creating extra iterations without clear value.
-- When ending planning (either because max iterations are reached or you call `end_planning()` early), ensure the plan includes a clear `reporting` step or an explicit handoff instruction to `WorkerTeam` for execution and follow-up.
-- Always call the `end_planning()` tool to signal the end of the planning phase; do not rely on natural language statements only. The runtime system listens for explicit tool calls.
-
-### Example Iteration Behavior
-- Example: If `CURRENT_PLAN_ITERATION=3` and `MAX_PLAN_ITERATIONS=3`, you must call `end_planning()` and not produce an alternative iteration plan. Include a short final rationale and a reporting step.
-- Example: If `CURRENT_PLAN_ITERATION=1` and `MAX_PLAN_ITERATIONS=3`, you can propose additional steps. If the plan is already sufficient, call `end_planning()` to prevent unnecessary iterations.
+- You will receive two prompt variables at runtime: `CURRENT_PLAN_ITERATION` and `MAX_PLAN_ITERATIONS`.
+- If `finish_plan` is false, the system will loop back to the Planner for another iteration (up to `MAX_PLAN_ITERATIONS`).
+- If `finish_plan` is true, the system will proceed to execute the plan (if `has_enough_context` is false) or generate the report (if `has_enough_context` is true).
+- If `CURRENT_PLAN_ITERATION` >= `MAX_PLAN_ITERATIONS`, you MUST set `finish_plan` to true to force execution or reporting.
 
 
 ## CRITICAL REQUIREMENT: step_type Field
@@ -196,7 +189,7 @@ Failure to include `step_type` for any step will cause validation errors and pre
 
 **CRITICAL: You MUST output a valid JSON object that exactly matches the Plan interface below. Do not include any text before or after the JSON. Do not use markdown code blocks. Output ONLY the raw JSON.**
 
-**IMPORTANT: The JSON must contain ALL required fields: locale, has_enough_context, thought, title, and steps. Do not return an empty object {}.**
+**IMPORTANT: The JSON must contain ALL required fields: locale, has_enough_context, finish_plan, thought, title, and steps. Do not return an empty object {}.**
 
 The `Plan` interface is defined as follows:
 
@@ -210,7 +203,8 @@ interface Step {
 
 interface Plan {
   locale: string; // e.g. "en-US" or "zh-CN", based on the user's language
-  has_enough_context: boolean;
+  has_enough_context: boolean; // True if problem is solved and ready for reporting
+  finish_plan: boolean; // True if plan generation is done for this iteration
   thought: string;
   title: string;
   steps: Step[]; // Analysis steps to be executed by worker agents
@@ -221,7 +215,8 @@ interface Plan {
 ```json
 {
   "locale": "zh-CN",
-  "has_enough_context": true,
+  "has_enough_context": false,
+  "finish_plan": true,
   "thought": "用户希望检查资产 192.168.1.10 是否受到 CVE-2024-1234 的影响。需要先收集 CVE-2024-1234 的详细信息（如受影响软件版本），然后针对性地检查资产 192.168.1.10 的软件组件，最后生成报告。",
   "title": "CVE-2024-1234 漏洞影响分析计划",
   "steps": [
@@ -236,12 +231,6 @@ interface Plan {
       "title": "资产软件组件定向分析",
       "description": "基于漏洞分析结果，扫描目标资产 192.168.1.10，重点检查是否存在受 CVE-2024-1234 影响的特定软件及版本。",
       "target": "192.168.1.10"
-    },
-    {
-      "step_type": "reporting",
-      "title": "生成安全分析报告",
-      "description": "汇总分析结果，生成包含漏洞影响评估、风险等级和修复建议的安全报告，并创建对应的 Jira 工单。",
-      "target": "综合报告"
     }
   ]
 }

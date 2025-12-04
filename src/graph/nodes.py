@@ -75,11 +75,6 @@ def TriageNode(state: NodeState):
     """A node that triages vulnerabilities based on their states."""
     pass
 
-@tool
-def end_planning():
-    """Signal the end of planning phase."""
-    return
-
 def PlannerNode(state: NodeState):
     """A node that plans actions based on the states of other nodes."""
     plan_iterations = state["plan_iterations"] if state.get("plan_iterations", 0) else 0
@@ -106,7 +101,6 @@ def PlannerNode(state: NodeState):
 
     response = (
         get_model_by_type("agentic")
-        .bind_tools([end_planning])
         .invoke(input=prompt)
     )
 
@@ -117,8 +111,13 @@ def PlannerNode(state: NodeState):
 
     # Check for tool calls to end planning
     goto = "PlannerNode"
-    if isinstance(plan, Plan) and plan.has_enough_context:
-        goto = "ReporterNode"
+    if isinstance(plan, Plan):
+        if plan.has_enough_context:
+            goto = "ReporterNode"
+        elif plan.finish_plan:
+            goto = "WorkerTeamNode"
+        else:
+            goto = "PlannerNode"
     
     return Command(
         update={

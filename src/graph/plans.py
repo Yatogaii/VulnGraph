@@ -53,6 +53,7 @@ class Plan(BaseModel):
 
     locale: str
     has_enough_context: bool
+    finish_plan: bool
     thought: str
     title: str
     steps: List[Step]
