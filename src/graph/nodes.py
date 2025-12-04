@@ -1,9 +1,11 @@
 from graph.state import NodeState, preserve_state_meta_fields
-from graph.plans import parse_plan_from_llm, Plan
+from types.plans import parse_plan_from_llm, Plan
 from typing import Annotated
 from prompts.template import apply_prompt_template
 from models import get_model_by_type
 from logger import logger
+from tools.search import search_topic_by_ddgs
+from tools.vuln_analyzer import get_cve_details
 
 from langchain_core.tools import tool
 from langgraph.types import Command
