@@ -112,11 +112,27 @@ When planning security analysis, consider these key aspects:
    - What is the recommended remediation priority?
    - What workarounds exist if patches are unavailable?
 
+## Workflow Selection
+
+Choose the most efficient execution order based on the goal:
+
+1. **Specific Vulnerability Check** (e.g., "Is 192.168.1.1 vulnerable to CVE-2024-1234?"):
+   - Priority: **VulnAnalyzer** -> **AssetsAnalyzer**
+   - Rationale: First understand what software/versions are affected by the CVE, then check if the asset has that specific software. This avoids unnecessary full system scans.
+
+2. **General Asset Scan** (e.g., "Scan 192.168.1.1 for vulnerabilities"):
+   - Priority: **AssetsAnalyzer** -> **VulnAnalyzer**
+   - Rationale: First identify all running software and versions on the asset, then check for any known vulnerabilities associated with that inventory.
+
+3. **Exploration/Research** (e.g., "Analyze the security posture of our web servers"):
+   - Priority: **AssetsAnalyzer** (Discovery) -> **VulnAnalyzer** (Assessment)
+   - Rationale: Discover the attack surface first.
+
 ## Step Constraints
 
-- **Maximum Steps**: Limit the plan to a maximum of {{ max_step_num }} steps for focused analysis.
+- Maximum Steps: Limit the plan to a maximum of {{ max_step_num }} steps for focused analysis.
 - Each step should be assigned to a specific worker agent
-- Steps should be ordered to respect dependencies (e.g., asset analysis before vulnerability analysis)
+- Steps should be ordered logically based on the chosen workflow (see Workflow Selection)
 - Consolidate related analysis tasks into single steps where appropriate
 
 ## Execution Rules
@@ -206,20 +222,20 @@ interface Plan {
 {
   "locale": "zh-CN",
   "has_enough_context": true,
-  "thought": "用户希望检查资产 192.168.1.10 是否受到 CVE-2024-1234 的影响。需要先分析该资产的软件组件，然后检查漏洞影响，最后生成报告。",
+  "thought": "用户希望检查资产 192.168.1.10 是否受到 CVE-2024-1234 的影响。需要先收集 CVE-2024-1234 的详细信息（如受影响软件版本），然后针对性地检查资产 192.168.1.10 的软件组件，最后生成报告。",
   "title": "CVE-2024-1234 漏洞影响分析计划",
   "steps": [
     {
-      "step_type": "asset_analysis",
-      "title": "资产软件组件分析",
-      "description": "扫描目标资产 192.168.1.10，识别其操作系统版本、已安装软件及其版本号，特别关注与 CVE-2024-1234 相关的组件。",
-      "target": "192.168.1.10"
-    },
-    {
       "step_type": "vuln_analysis",
       "title": "CVE-2024-1234 漏洞影响评估",
-      "description": "分析 CVE-2024-1234 的漏洞详情，包括受影响的软件版本、攻击向量、CVSS 评分，并判断目标资产是否受影响。",
+      "description": "分析 CVE-2024-1234 的漏洞详情，确定受影响的软件名称、版本范围、攻击向量及 CVSS 评分，为后续资产匹配提供依据。",
       "target": "CVE-2024-1234"
+    },
+    {
+      "step_type": "asset_analysis",
+      "title": "资产软件组件定向分析",
+      "description": "基于漏洞分析结果，扫描目标资产 192.168.1.10，重点检查是否存在受 CVE-2024-1234 影响的特定软件及版本。",
+      "target": "192.168.1.10"
     },
     {
       "step_type": "reporting",
@@ -234,7 +250,7 @@ interface Plan {
 # Notes
 
 - Focus on creating actionable steps that can be executed by the worker agents
-- Ensure logical ordering of steps (asset analysis → vulnerability analysis → reporting)
+- Ensure logical ordering of steps based on the selected workflow
 - Each step should have a clear purpose and expected output
 - Prioritize critical and high-severity vulnerabilities
 - Consider the scope and scale of the analysis task
