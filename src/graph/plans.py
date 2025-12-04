@@ -22,7 +22,7 @@ import json
 import re
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, Field
 
 
 class Step(BaseModel):
@@ -43,6 +43,10 @@ class Step(BaseModel):
     # Extra fields should not be allowed – keep the model strict to match the
     # prompt contract.
     model_config = ConfigDict(extra="forbid")
+
+    execution_res: Optional[str] = Field(
+        default=None, description="The Step execution result"
+    )
 
 
 class Plan(BaseModel):

@@ -9,14 +9,35 @@ from graph.nodes import (
     VulnAnalyzerNode,
     ReporterNode
 )
+from graph.plans import Plan
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
-def whether_to_continue_analyses(state: NodeState):
-    pass
-    
+def decide_worker_team_goto(state: NodeState) -> str:
+    """Decide which node the WorkerTeamNode should go to next based on state."""
+    plan: Plan|None = state.get("plan", None)
+    if plan is None:
+        raise ValueError("No plan found in state for WorkerTeamNode decision.")
+    if not plan.steps:
+        return "ReporterNode"
 
+    # Find first unfinished step
+    incomplete_step = None
+    for step in plan.steps:
+        if not step.execution_res:
+            incomplete_step = step
+            break
+
+    if incomplete_step is None:
+        return "PlannerNode"
+    if incomplete_step.step_type == "asset_analysis":
+        return "AssetsAnalzerNode"
+    elif incomplete_step.step_type == "vuln_analysis":
+        return "VulnAnalyzerNode"
+    else:
+        return "PlannerNode"
+    
 def _build_base_graph() -> StateGraph:
     graph = StateGraph(state_schema=NodeState)
 
@@ -35,7 +56,7 @@ def _build_base_graph() -> StateGraph:
 
     graph.add_conditional_edges(
         source="WorkerTeamNode",
-        path=whether_to_continue_analyses,
+        path=decide_worker_team_goto,
         path_map=["PlannerNode", "VulnAnalyzerNode", "AssetsAnalzerNode"],
     )
 

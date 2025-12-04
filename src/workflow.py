@@ -32,6 +32,7 @@ async def run_agent_workflow_async(
             "status": "initialized",
             "goto": None,
             "vulns": [],
+            "plan": None,
             "plan_iterations": 0,
             "final_report": "",
         })
