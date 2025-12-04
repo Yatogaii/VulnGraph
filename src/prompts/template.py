@@ -1,4 +1,8 @@
 import os
+
+from graph.state import NodeState
+
+from langchain_core.messages import SystemMessage
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
 
 # Initialize Jinja2 environment
@@ -9,7 +13,7 @@ env = Environment(
     lstrip_blocks=True,
 )
 
-def get_prompt_template(prompt_name: str, **context) -> str:
+def _get_prompt_template(prompt_name: str, **context) -> str:
     """
     Load and return a prompt template using Jinja2.
 
@@ -26,3 +30,8 @@ def get_prompt_template(prompt_name: str, **context) -> str:
         return template.render(**context)
     except Exception as e:
         raise ValueError(f"Error loading template {prompt_name}: {str(e)}")
+
+def apply_prompt_template(prompt_name: str, state: NodeState, **context) -> list:
+    prompt_str = _get_prompt_template(prompt_name, **context)
+
+    return [SystemMessage(content=prompt_str)] + state["messages"]

@@ -1,6 +1,7 @@
 from graph.state import NodeState, preserve_state_meta_fields
+from graph.plans import parse_plan_from_llm
 from typing import Annotated
-from prompts.template import get_prompt_template
+from prompts.template import apply_prompt_template
 from models import get_model_by_type
 from logger import logger
 
@@ -23,23 +24,20 @@ def handoff_to_planner(
 
 def CoordinatorNode(state: NodeState):
     """A node that coordinates other nodes based on their states."""
-    prompt = get_prompt_template("coordinator")
+    prompt = apply_prompt_template("coordinator", state)
     initial_topic = state.get("user_input", "")
+
+    prompt += [SystemMessage(content=f"User input: {initial_topic}")]
     
     if initial_topic.strip() == "":
         raise ValueError("User input is empty for CoordinatorNode.")
-
-    current_messages = [
-        SystemMessage(content=prompt),
-        HumanMessage(content=initial_topic, name="User"),
-    ]
 
     tools = [handoff_to_planner]
 
     response = (
         get_model_by_type("agentic")
         .bind_tools(tools)
-        .invoke(input=current_messages)
+        .invoke(input=prompt)
     )
 
     messages = state.get("messages", [])
@@ -101,21 +99,25 @@ def PlannerNode(state: NodeState):
 
     plan_iterations += 1    
     state["plan_iterations"] = plan_iterations
+    
+    prompt = apply_prompt_template("planner", state)
 
     response = (
         get_model_by_type("agentic")
         .bind_tools([end_planning])
-        .invoke(input=msgs)
+        .invoke(input=prompt)
     )
+
+    plan = None
+    if isinstance(response.content, str):
+        plan = parse_plan_from_llm(response.content)
     
     msgs += [AIMessage(content=response.content, name="PlannerNode")]
 
     # Check for tool calls to end planning
     goto = "PlannerNode"
-    if hasattr(response, "tool_calls") and response.tool_calls:
-        for call in response.tool_calls:
-            if call["name"] == "end_planning":
-                goto = "ReporterNode"
+    if plan:
+        goto = "ReporterNode"
     
     return Command(
         update={
