@@ -25,6 +25,12 @@ def _init_kimi_k2() -> BaseChatModel:
                              api_key=SecretStr(settings.KIMI_API_KEY))
     return model
 
+def _init_deepseek_v3_2() -> BaseChatModel:
+    model = ChatOpenAI(model="deepseek-v3.2",
+                             base_url="https://api.gptapi.us/v1/chat/completions",
+                             api_key=SecretStr(settings.OPENAI_API_KEY))
+    return model
+
 def _init_ollama_model(model_name="qwen3:8b"):
     model = ChatOllama(model=model_name,
                              base_url=settings.OLLAMA_API_URL)
@@ -33,7 +39,7 @@ def _init_ollama_model(model_name="qwen3:8b"):
 def get_model_by_type(model_type: str = "agentic") -> BaseChatModel:
     """根据模型类型获取相应的模型实例。"""
     if model_type == "normal":
-        return _init_chat_model_from_modelscope()
+        return _init_deepseek_v3_2()
     elif model_type == "agentic":
         return _init_kimi_k2()
     elif model_type == "free":

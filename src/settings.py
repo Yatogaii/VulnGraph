@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "MyApp"
     debug_mode: bool = False
     debug: bool = False
-    max_plan_iterations: int = 1
+    max_plan_iterations: int = 3
     max_step_num: int = 3
     enable_background_investigation: bool = True
     enable_clarification: Optional[bool] = None
@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     KIMI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
+    DEEPSEEK_KEY: str = ""
     HF_TOKEN: str = ""
 
     OLLAMA_API_URL: str = "http://localhost:11434"
