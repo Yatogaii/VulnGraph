@@ -1,4 +1,4 @@
-from graph.state import NodeState
+from graph.state import NodeState, preserve_state_meta_fields
 from typing import Annotated
 from prompts.template import get_prompt_template
 from models import get_model_by_type
@@ -7,6 +7,8 @@ from logger import logger
 from langchain_core.tools import tool
 from langgraph.types import Command
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+from settings import settings
 
 
 @tool
@@ -47,8 +49,11 @@ def CoordinatorNode(state: NodeState):
     goto = '_end_'
     if hasattr(response, "tool_calls") and response.tool_calls:
         for call in response.tool_calls:
-            if call.__getattribute__("tool_name") == "handoff_to_planner":
-                goto="PlannerNode",
+            try:
+                if call["name"] == "handoff_to_planner":
+                    goto = "PlannerNode"
+            except Exception as e:
+                logger.error(f"Error processing tool call: {e}")
     else:
         # No tool calls detected - fallback to planner instead of ending
         logger.warning(
@@ -72,9 +77,52 @@ def TriageNode(state: NodeState):
     """A node that triages vulnerabilities based on their states."""
     pass
 
+@tool
+def end_planning():
+    """Signal the end of planning phase."""
+    return
+
 def PlannerNode(state: NodeState):
     """A node that plans actions based on the states of other nodes."""
-    pass
+    plan_iterations = state["plan_iterations"] if state.get("plan_iterations", 0) else 0
+    
+    logger.info(f"PlannerNode: Current plan iteration {plan_iterations}, max allowed {settings.max_plan_iterations}")
+
+    if plan_iterations >= settings.max_plan_iterations:
+        return Command(
+            update=preserve_state_meta_fields(state),
+            goto="ReporterNode",
+        )
+
+    assert len(state["messages"])>0, "No messages found in state for PlannerNode."
+
+    msgs = state["messages"]
+    msgs += [SystemMessage(content=f"Current plan iteration: {plan_iterations + 1}, max allowed: {settings.max_plan_iterations}", name="PlannerNode")]
+
+    plan_iterations += 1    
+    state["plan_iterations"] = plan_iterations
+
+    response = (
+        get_model_by_type("agentic")
+        .bind_tools([end_planning])
+        .invoke(input=msgs)
+    )
+    
+    msgs += [AIMessage(content=response.content, name="PlannerNode")]
+
+    # Check for tool calls to end planning
+    goto = "PlannerNode"
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        for call in response.tool_calls:
+            if call["name"] == "end_planning":
+                goto = "ReporterNode"
+    
+    return Command(
+        update={
+            "messages": msgs,
+        },
+        goto=goto,
+    )
 
 def UserFeedbackNode(state: NodeState):
     """A node that handles user feedback based on their states."""
@@ -94,4 +142,5 @@ def VulnAnalyzerNode(state: NodeState):
 
 def ReporterNode(state: NodeState):
     """A node that generates reports based on the states of other nodes."""
-    pass
+
+    return {"final_report": state["messages"]}

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Any
 from langgraph.graph import MessagesState
 class NodeState(MessagesState):
     user_input: str
@@ -7,4 +7,24 @@ class NodeState(MessagesState):
     goto: Optional[str]
     vulns: List[str]
 
+    plan_iterations: int
+
     final_report: str
+    
+def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
+    """Return a dict with the NodeState meta fields preserved in 'key': value format.
+
+    This helper returns a minimal mapping of relevant state metadata so it can be
+    persisted, logged, or copied without including the full messages payload.
+    """
+    # Use mapping-style access (state["field"]) to ensure compatibility with
+    # typed MessageState objects which may act like mappings internally.
+    return {
+        "user_input": state["user_input"],
+        "label": state["label"],
+        "status": state["status"],
+        "goto": state["goto"],
+        "vulns": state["vulns"],
+        "plan_iterations": state["plan_iterations"],
+        "final_report": state["final_report"],
+    }
