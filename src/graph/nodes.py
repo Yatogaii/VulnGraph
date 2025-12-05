@@ -7,9 +7,10 @@ from logger import logger
 from tools.search import search_topic_by_ddgs
 from tools.vuln_analyzer import get_cve_details
 
+from langgraph.prebuilt import ToolNode
 from langchain_core.tools import tool
 from langgraph.types import Command
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, RemoveMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from settings import settings
@@ -152,6 +153,10 @@ def search_cve_tool(cve_id: str):
     """Search for a CVE by ID using NVD."""
     return get_cve_details(cve_id)
 
+vuln_tools = [search_ddgs_tool, search_cve_tool]
+
+vuln_tool_node = ToolNode(vuln_tools)
+
 def VulnAnalyzerNode(state: NodeState):
     """A node that analyzes vulnerabilities based on their states."""
     prompt = apply_prompt_template("vuln_analyzer", state)
@@ -164,11 +169,25 @@ def VulnAnalyzerNode(state: NodeState):
         .invoke(input=prompt)
     )
 
+    if not response.tool_calls:
+        # 我们寻找 State 里那些 "过期的" ToolCall 和 ToolMessage
+        messages_to_delete = []
+        for m in state["messages"]:
+            if isinstance(m, (ToolMessage, AIMessage)):
+                # 只有当这是历史消息（不是本次刚生成的）才删除
+                # 逻辑可以根据需求定制，比如：删除除了 HumanMessage 以外的所有旧消息
+                if m.id != None and m.id != response.id: 
+                     messages_to_delete.append(RemoveMessage(id=m.id))
+        return Command(
+            update={
+                "messages": [response] + messages_to_delete
+            },
+        )
+
     return Command(
         update={
-            "messages": [HumanMessage(content=response.content, name="VulnAnalyzerNode")]
+            "messages": [response]
         },
-        goto="PlannerNode"
     )
 
 def ReporterNode(state: NodeState):

@@ -7,10 +7,12 @@ from graph.nodes import (
     WorkerTeamNode,
     AssetsAnalzerNode,
     VulnAnalyzerNode,
+    vuln_tool_node,
     ReporterNode
 )
 from schemas.plans import Plan
 
+from langgraph.prebuilt import tools_condition
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
@@ -49,6 +51,7 @@ def _build_base_graph() -> StateGraph:
     graph.add_node("WorkerTeamNode", WorkerTeamNode)
     graph.add_node("AssetsAnalzerNode", AssetsAnalzerNode)
     graph.add_node("VulnAnalyzerNode", VulnAnalyzerNode)
+    graph.add_node("VulnToolNode", vuln_tool_node)
     graph.add_node("ReporterNode", ReporterNode)
 
     graph.add_edge(START, "CoordinatorNode")
@@ -58,6 +61,15 @@ def _build_base_graph() -> StateGraph:
         source="WorkerTeamNode",
         path=decide_worker_team_goto,
         path_map=["PlannerNode", "VulnAnalyzerNode", "AssetsAnalzerNode"],
+    )
+
+    graph.add_conditional_edges(
+        source="VulnAnalyzerNode",
+        path=tools_condition,
+        path_map={
+            "tools": "VulnToolNode",
+            "__end__": "WorkerTeamNode",
+        }
     )
 
     return graph
