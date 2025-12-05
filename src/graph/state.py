@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from langgraph.graph import MessagesState
-from types.plans import Plan
+from schemas.plans import Plan
 class NodeState(MessagesState):
     user_input: str
     label: str

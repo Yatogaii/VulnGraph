@@ -1,5 +1,5 @@
 from graph.state import NodeState, preserve_state_meta_fields
-from types.plans import parse_plan_from_llm, Plan
+from schemas.plans import parse_plan_from_llm, Plan
 from typing import Annotated
 from prompts.template import apply_prompt_template
 from models import get_model_by_type
@@ -10,6 +10,7 @@ from tools.vuln_analyzer import get_cve_details
 from langchain_core.tools import tool
 from langgraph.types import Command
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from settings import settings
 
@@ -156,42 +157,16 @@ def VulnAnalyzerNode(state: NodeState):
     prompt = apply_prompt_template("vuln_analyzer", state)
     
     tools = [search_ddgs_tool, search_cve_tool]
-    tool_map = {t.name: t for t in tools}
     
-    model = get_model_by_type("agentic").bind_tools(tools)
-    
-    messages = prompt
-    final_response = None
-
-    # Simple ReAct loop
-    for _ in range(5):
-        response = model.invoke(messages)
-        messages.append(response)
-        final_response = response
-        
-        if not response.tool_calls:
-            break
-            
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            tool_id = tool_call["id"]
-            
-            if tool_name in tool_map:
-                try:
-                    tool_result = tool_map[tool_name].invoke(tool_args)
-                except Exception as e:
-                    tool_result = f"Error executing tool {tool_name}: {e}"
-            else:
-                tool_result = f"Tool {tool_name} not found."
-                
-            messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
-    
-    content = final_response.content if final_response else "No analysis generated."
+    response = (
+        get_model_by_type("agentic")
+        .bind_tools(tools)
+        .invoke(input=prompt)
+    )
 
     return Command(
         update={
-            "messages": [HumanMessage(content=content, name="VulnAnalyzerNode")]
+            "messages": [HumanMessage(content=response.content, name="VulnAnalyzerNode")]
         },
         goto="PlannerNode"
     )
