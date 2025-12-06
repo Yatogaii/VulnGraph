@@ -212,4 +212,77 @@ def VulnAnalyzerNode(state: NodeState):
 
 def ReporterNode(state: NodeState):
     """A node that generates reports based on the states of other nodes."""
-    pass
+    
+    # 构建报告上下文
+    user_input = state.get("user_input", "")
+    plan: Plan | None = state.get("plan")
+    vulns: list[Vuln] = state.get("vulns", []) or []
+    
+    # 准备漏洞摘要信息
+    vuln_summary = []
+    for v in vulns:
+        vuln_info = {
+            "id": v.id,
+            "description": v.description,
+            "published": v.published,
+            "v2score": v.v2score,
+            "v31score": v.v31score,
+            "additional_info": v.additional_info,
+            "impacts": [
+                {"name": imp.name, "before_version": imp.before_version, "after_version": imp.after_version}
+                for imp in (v.impacts or [])
+            ]
+        }
+        vuln_summary.append(vuln_info)
+    
+    # 准备 plan 执行结果摘要
+    plan_summary = []
+    if plan and plan.steps:
+        for step in plan.steps:
+            plan_summary.append({
+                "step_type": step.step_type,
+                "title": step.title,
+                "target": step.target,
+                "execution_res": step.execution_res[:500] if step.execution_res else None  # 截断避免过长
+            })
+    
+    # 构建 prompt 上下文
+    context_message = f"""
+## Analysis Context
+
+### User's Original Request
+{user_input}
+
+### Executed Plan Summary
+```json
+{plan_summary}
+```
+
+### Discovered Vulnerabilities
+```json
+{vuln_summary}
+```
+
+Please generate a comprehensive security report based on the above findings.
+"""
+    
+    prompt = apply_prompt_template("reporter", state)
+    prompt.append(SystemMessage(content=context_message))
+    
+    response = (
+        get_model_by_type("normal")
+        .invoke(input=prompt)
+    )
+    
+    final_report = ""
+    if response.content and isinstance(response.content, str):
+        final_report = response.content
+    
+    logger.info(f"ReporterNode: Generated report with {len(final_report)} characters")
+    
+    return Command(
+        update={
+            "final_report": final_report,
+            "messages": [AIMessage(content=final_report, name="ReporterNode")],
+        },
+    )
