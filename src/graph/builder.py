@@ -8,6 +8,7 @@ from graph.nodes import (
     AssetsAnalzerNode,
     VulnAnalyzerNode,
     vuln_tool_node,
+    asset_tool_node,
     ReporterNode
 )
 from schemas.plans import Plan
@@ -50,6 +51,7 @@ def _build_base_graph() -> StateGraph:
     graph.add_node("UserFeedbackNode", UserFeedbackNode)
     graph.add_node("WorkerTeamNode", WorkerTeamNode)
     graph.add_node("AssetsAnalzerNode", AssetsAnalzerNode)
+    graph.add_node("AssetToolNode", asset_tool_node)
     graph.add_node("VulnAnalyzerNode", VulnAnalyzerNode)
     graph.add_node("VulnToolNode", vuln_tool_node)
     graph.add_node("ReporterNode", ReporterNode)
@@ -62,6 +64,16 @@ def _build_base_graph() -> StateGraph:
         path=decide_worker_team_goto,
         path_map=["PlannerNode", "VulnAnalyzerNode", "AssetsAnalzerNode"],
     )
+
+    graph.add_conditional_edges(
+        source="AssetsAnalzerNode",
+        path=tools_condition,
+        path_map={
+            "tools": "AssetToolNode",
+            "__end__": "WorkerTeamNode",
+        }
+    )
+    graph.add_edge("AssetToolNode", "AssetsAnalzerNode")
 
     graph.add_conditional_edges(
         source="VulnAnalyzerNode",
