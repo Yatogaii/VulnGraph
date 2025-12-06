@@ -40,7 +40,8 @@ async def run_agent_workflow_async(
     last_message_cnt = 0
     final_state = None
     async for s in graph.astream(
-        input=initial_state
+        input=initial_state,
+        config={"recursion_limit": 100}
     ):
         try:
             final_state = s
