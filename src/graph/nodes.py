@@ -1,5 +1,6 @@
 from graph.state import NodeState, preserve_state_meta_fields
 from schemas.plans import parse_plan_from_llm, Plan
+from schemas.vulns import Vuln, ImpactedSoftware, parse_vulns_from_llm
 from typing import Annotated
 from prompts.template import apply_prompt_template
 from models import get_model_by_type
@@ -169,6 +170,21 @@ def VulnAnalyzerNode(state: NodeState):
         .invoke(input=prompt)
     )
 
+    # not an tool call
+    vulns = []
+    plan: Plan | None = state.get("plan")
+    if len(response.tool_calls) == 0 and response.content and isinstance(response.content, str):
+        parsed_vulns = parse_vulns_from_llm(response.content, raise_on_error=False)
+        if parsed_vulns:
+            vulns.extend(parsed_vulns)
+    
+        # 更新第一个未完成的 step 的 execution_res
+        if plan and plan.steps:
+            for step in plan.steps:
+                if step.execution_res is None:
+                    step.execution_res = response.content if response.content else "No response content"
+                    break
+
     if not response.tool_calls:
         # 我们寻找 State 里那些 "过期的" ToolCall 和 ToolMessage
         messages_to_delete = []
@@ -180,13 +196,17 @@ def VulnAnalyzerNode(state: NodeState):
                      messages_to_delete.append(RemoveMessage(id=m.id))
         return Command(
             update={
-                "messages": [response] + messages_to_delete
+                "messages": [response] + messages_to_delete,
+                "vulns": vulns,
+                "plan": plan,  # 返回更新后的 plan
             },
         )
-
+    
     return Command(
         update={
-            "messages": [response]
+            "messages": [response],
+            "vulns": vulns,
+            "plan": plan,  # 返回更新后的 plan
         },
     )
 

@@ -1,12 +1,14 @@
 from typing import List, Optional, Any
 from langgraph.graph import MessagesState
 from schemas.plans import Plan
+from schemas.vulns import Vuln
+
 class NodeState(MessagesState):
     user_input: str
     label: str
     status: str
     goto: Optional[str]
-    vulns: List[str]
+    vulns: Optional[List[Vuln]]
 
     plan_iterations: int
     plan: Optional[Plan]

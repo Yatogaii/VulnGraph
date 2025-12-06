@@ -11,8 +11,8 @@ def get_cve_details(cve_id: str):
                     "id": cve.id,
                     "descriptions": cve.descriptions[0].value if cve.descriptions else "",
                     "published": cve.published,
-                    "v2score": cve.v2score if cve.v2score else None,
-                    "v31score": cve.v31score if cve.v31score else None,
+                    "v2score": cve.v2score if hasattr(cve, "v2score") and cve.v2score else None,
+                    "v31score": cve.v31score if hasattr(cve, "v31score") and cve.v31score else None,
                 }
         return None
     except Exception as e:

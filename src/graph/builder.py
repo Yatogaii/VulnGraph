@@ -71,6 +71,7 @@ def _build_base_graph() -> StateGraph:
             "__end__": "WorkerTeamNode",
         }
     )
+    graph.add_edge("VulnToolNode", "VulnAnalyzerNode")
 
     return graph
 

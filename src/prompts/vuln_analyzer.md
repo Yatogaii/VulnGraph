@@ -21,7 +21,7 @@ You are an expert Vulnerability Analyzer. Your goal is to investigate and analyz
 
 ## Output Format
 
-**CRITICAL: You MUST output a valid JSON object that exactly matches the Vuln interface below. Do not include any text before or after the JSON. Do not use markdown code blocks. Output ONLY the raw JSON.**
+**CRITICAL: You MUST output a valid JSON array that contains one or more Vuln objects matching the interface below. Do not include any text before or after the JSON. Do not use markdown code blocks. Output ONLY the raw JSON array.**
 
 The `Vuln` interface is defined as follows:
 
@@ -45,21 +45,45 @@ interface Vuln {
 }
 ```
 
-**Example Output:**
+**Example Output (single vulnerability):**
 ```json
-{
-  "id": "CVE-2021-44228",
-  "description": "Apache Log4j2 2.0-beta9 through 2.15.0 (excluding security releases 2.12.2, 2.12.3, and 2.3.1) JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints.",
-  "published": "2021-12-10",
-  "v2score": 9.3,
-  "v31score": 10.0,
-  "additional_info": "Also known as Log4Shell. Allows RCE via JNDI injection.",
-  "impacts": [
-    {
-      "name": "Apache Log4j2",
-      "before_version": "2.15.0",
-      "after_version": "2.0-beta9"
-    }
-  ]
-}
+[
+  {
+    "id": "CVE-2021-44228",
+    "description": "Apache Log4j2 2.0-beta9 through 2.15.0 (excluding security releases 2.12.2, 2.12.3, and 2.3.1) JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints.",
+    "published": "2021-12-10",
+    "v2score": 9.3,
+    "v31score": 10.0,
+    "additional_info": "Also known as Log4Shell. Allows RCE via JNDI injection.",
+    "impacts": [
+      {
+        "name": "Apache Log4j2",
+        "before_version": "2.15.0",
+        "after_version": "2.0-beta9"
+      }
+    ]
+  }
+]
+```
+
+**Example Output (multiple vulnerabilities):**
+```json
+[
+  {
+    "id": "CVE-2021-44228",
+    "description": "Log4Shell RCE vulnerability in Apache Log4j2.",
+    "published": "2021-12-10",
+    "v31score": 10.0,
+    "additional_info": "Critical RCE via JNDI injection.",
+    "impacts": [{"name": "Apache Log4j2", "before_version": "2.15.0"}]
+  },
+  {
+    "id": "CVE-2021-45046",
+    "description": "Incomplete fix for CVE-2021-44228 in Apache Log4j2.",
+    "published": "2021-12-14",
+    "v31score": 9.0,
+    "additional_info": "Bypass of the initial Log4Shell fix.",
+    "impacts": [{"name": "Apache Log4j2", "before_version": "2.16.0"}]
+  }
+]
 ```
