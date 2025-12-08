@@ -1,5 +1,6 @@
 import asyncio
 import os
+import uuid
 from datetime import datetime
 from typing import Any
 from graph.state import NodeState
@@ -48,6 +49,7 @@ def _save_report_to_markdown(report: str, user_input: str) -> str:
 
 async def run_agent_workflow_async(
     user_input: str,
+    run_id: str | None = None,
     debug: bool = False,
     max_plan_iterations: int = 1,
     max_step_num: int = 3,
@@ -56,11 +58,16 @@ async def run_agent_workflow_async(
     max_clarification_rounds: int | None = None,
     initial_state: NodeState | None = None,
 ) -> None:
-    logger.info(f"Starting agent workflow with input: {user_input}")
+    # allow caller-provided run_id; fall back to state-provided or fresh uuid
+    if initial_state is not None:
+        run_id = run_id or initial_state.get("run_id")
+    run_id = run_id or uuid.uuid4().hex
+    logger.info(f"Starting agent workflow run_id={run_id} input: {user_input}")
 
     if initial_state is None:
         initial_state = NodeState({
             "user_input": user_input,
+            "run_id": run_id,
             "messages": [],
             "label": "Start",
             "status": "initialized",
@@ -70,6 +77,9 @@ async def run_agent_workflow_async(
             "plan_iterations": 0,
             "final_report": "",
         })
+    else:
+        # ensure run_id is present on resumed state
+        initial_state["run_id"] = run_id
 
     last_message_cnt = 0
     final_state = None

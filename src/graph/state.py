@@ -5,6 +5,7 @@ from schemas.vulns import Vuln
 
 class NodeState(MessagesState):
     user_input: str
+    run_id: Optional[str]
     label: str
     status: str
     goto: Optional[str]
@@ -25,6 +26,7 @@ def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
     # typed MessageState objects which may act like mappings internally.
     return {
         "user_input": state["user_input"],
+        "run_id": state.get("run_id"),
         "label": state["label"],
         "status": state["status"],
         "goto": state["goto"],
