@@ -234,17 +234,21 @@ async def run_server(
 
     async def plan_handler(request: web.Request) -> web.Response:
         run_id = request.match_info.get('run_id')
+        if run_id is None:
+            return web.json_response({'error': 'run_id is required'}, status=400)
         state = get_run_state(run_id)
         if not state:
             return web.json_response({'error': 'run_id not found'}, status=404)
         plan = state.get('plan')
-        if hasattr(plan, "model_dump"):
+        if plan is not None and hasattr(plan, "model_dump"):
             plan = plan.model_dump()
         status = state.get('plan_review_status')
         return web.json_response({'run_id': run_id, 'plan_review_status': status, 'plan': plan})
 
     async def plan_feedback_handler(request: web.Request) -> web.Response:
         run_id = request.match_info.get('run_id')
+        if run_id is None:
+            return web.json_response({'error': 'run_id is required'}, status=400)
         data = await request.json()
         approved = bool(data.get('approved', False))
         comment = data.get('comment')

@@ -1,5 +1,6 @@
 from graph.state import NodeState
 from pathlib import Path
+import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
 from graph.nodes import (
     CoordinatorNode,
@@ -22,7 +23,9 @@ from langgraph.graph.state import CompiledStateGraph
 CHECKPOINTS_DIR = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 CHECKPOINTS_DB = CHECKPOINTS_DIR / "checkpoints.sqlite"
-checkpointer = SqliteSaver(str(CHECKPOINTS_DB))
+# Use an explicit sqlite3 connection to satisfy type expectations
+CHECKPOINTS_CONN = sqlite3.connect(str(CHECKPOINTS_DB))
+checkpointer = SqliteSaver(CHECKPOINTS_CONN)
 def decide_worker_team_goto(state: NodeState) -> str:
     """Decide which node the WorkerTeamNode should go to next based on state."""
     plan: Plan|None = state.get("plan", None)

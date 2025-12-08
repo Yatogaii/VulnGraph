@@ -3,9 +3,10 @@ import os
 import uuid
 import copy
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from graph.state import NodeState
 from graph.builder import graph
+from langchain_core.runnables.config import RunnableConfig
 
 from logger import logger
 
@@ -54,7 +55,7 @@ def _save_report_to_markdown(report: str, user_input: str) -> str:
 
 def get_run_state(run_id: str) -> NodeState | None:
     """Get the last state for a run_id via checkpointer (fallback to memory)."""
-    cfg = {"configurable": {"thread_id": run_id}}
+    cfg: RunnableConfig = cast(RunnableConfig, {"configurable": {"thread_id": run_id}})
     try:
         snapshot = graph.get_state(cfg)
         if snapshot:
@@ -64,7 +65,7 @@ def get_run_state(run_id: str) -> NodeState | None:
             elif isinstance(snapshot, dict):
                 values = snapshot.get("values") or snapshot
             if values:
-                return NodeState(values)
+                return cast(NodeState, values)
     except Exception as e:
         logger.error(f"Failed to get state for {run_id} from checkpointer: {e}")
     return RUN_STATE_CACHE.get(run_id)
@@ -82,7 +83,7 @@ def update_plan_feedback_state(run_id: str, approved: bool, comment: str | None 
     new_state["plan_review_status"] = "approved" if approved else "rejected"
     if comment:
         new_state["plan_review_comment"] = comment
-    return NodeState(new_state)
+    return cast(NodeState, new_state)
 
 async def run_agent_workflow_async(
     user_input: str,
@@ -122,12 +123,14 @@ async def run_agent_workflow_async(
 
     last_message_cnt = 0
     final_state = None
+    cfg: RunnableConfig = cast(RunnableConfig, {
+        "recursion_limit": 100,
+        "configurable": {"thread_id": run_id},
+    })
+
     async for s in graph.astream(
         input=initial_state,
-        config={
-            "recursion_limit": 100,
-            "configurable": {"thread_id": run_id},
-        }
+        config=cfg,
     ):
         try:
             final_state = s
@@ -135,7 +138,7 @@ async def run_agent_workflow_async(
             if isinstance(s, dict):
                 run_id = s.get("run_id", run_id)
                 if run_id:
-                    RUN_STATE_CACHE[run_id] = copy.deepcopy(s)
+                    RUN_STATE_CACHE[run_id] = cast(NodeState, copy.deepcopy(s))
             if isinstance(s, dict) and "messages" in s:
                 if len(s["messages"]) <= last_message_cnt:
                     continue
