@@ -156,7 +156,8 @@ def UserFeedbackNode(state: NodeState):
                 "plan_review_status": "pending",
                 "status": "waiting_user_review",
             },
-            goto="UserFeedbackNode",
+            # stop current execution; external feedback will resume via thread_id
+            goto="__end__",
         )
 
     # user approved

@@ -1,4 +1,6 @@
 from graph.state import NodeState
+from pathlib import Path
+from langgraph.checkpoint.sqlite import SqliteSaver
 from graph.nodes import (
     CoordinatorNode,
     TriageNode,
@@ -17,6 +19,10 @@ from langgraph.prebuilt import tools_condition
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
+CHECKPOINTS_DIR = Path(__file__).resolve().parent.parent / "data"
+CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+CHECKPOINTS_DB = CHECKPOINTS_DIR / "checkpoints.sqlite"
+checkpointer = SqliteSaver(str(CHECKPOINTS_DB))
 def decide_worker_team_goto(state: NodeState) -> str:
     """Decide which node the WorkerTeamNode should go to next based on state."""
     plan: Plan|None = state.get("plan", None)
@@ -92,7 +98,6 @@ def _build_base_graph() -> StateGraph:
 
 def build_graph() -> CompiledStateGraph:
     graph = _build_base_graph()
-
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 graph = build_graph()

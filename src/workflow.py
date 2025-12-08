@@ -19,7 +19,7 @@ console = Console()
 # 报告输出目录
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
 
-# 简单的内存态缓存，后续可被 durable checkpointer 替换
+# 简单的内存态缓存，辅以 sqlite checkpointer
 RUN_STATE_CACHE: dict[str, NodeState] = {}
 
 
@@ -53,7 +53,20 @@ def _save_report_to_markdown(report: str, user_input: str) -> str:
 
 
 def get_run_state(run_id: str) -> NodeState | None:
-    """Get the last cached state for a run_id (in-memory only)."""
+    """Get the last state for a run_id via checkpointer (fallback to memory)."""
+    cfg = {"configurable": {"thread_id": run_id}}
+    try:
+        snapshot = graph.get_state(cfg)
+        if snapshot:
+            values = None
+            if hasattr(snapshot, "values"):
+                values = snapshot.values
+            elif isinstance(snapshot, dict):
+                values = snapshot.get("values") or snapshot
+            if values:
+                return NodeState(values)
+    except Exception as e:
+        logger.error(f"Failed to get state for {run_id} from checkpointer: {e}")
     return RUN_STATE_CACHE.get(run_id)
 
 
@@ -62,7 +75,7 @@ def update_plan_feedback_state(run_id: str, approved: bool, comment: str | None 
 
     Returns the new state (not yet executed) or None if not found.
     """
-    state = RUN_STATE_CACHE.get(run_id)
+    state = get_run_state(run_id)
     if state is None:
         return None
     new_state = copy.deepcopy(state)
@@ -111,7 +124,10 @@ async def run_agent_workflow_async(
     final_state = None
     async for s in graph.astream(
         input=initial_state,
-        config={"recursion_limit": 100}
+        config={
+            "recursion_limit": 100,
+            "configurable": {"thread_id": run_id},
+        }
     ):
         try:
             final_state = s
