@@ -116,11 +116,15 @@ def PlannerNode(state: NodeState):
 
     # Check for tool calls to end planning
     goto = "PlannerNode"
+    plan_review_status = state.get("plan_review_status")
     if isinstance(plan, Plan):
         if plan.has_enough_context:
             goto = "ReporterNode"
+            plan_review_status = None
         elif plan.finish_plan:
-            goto = "WorkerTeamNode"
+            # 计划完成但缺少上下文，先让用户确认
+            goto = "UserFeedbackNode"
+            plan_review_status = "pending"
         else:
             goto = "PlannerNode"
     
@@ -128,13 +132,62 @@ def PlannerNode(state: NodeState):
         update={
             "plan_iterations": plan_iterations,
             "plan": plan,
+            "plan_review_status": plan_review_status,
+            "plan_review_comment": None if plan_review_status == "pending" else state.get("plan_review_comment"),
         },
         goto=goto,
     )
 
 def UserFeedbackNode(state: NodeState):
     """A node that handles user feedback based on their states."""
-    pass
+    plan: Plan | None = state.get("plan")
+    review_status = state.get("plan_review_status")
+    comment = state.get("plan_review_comment")
+
+    if plan is None:
+        logger.warning("UserFeedbackNode called without plan; sending back to planner")
+        return Command(update={}, goto="PlannerNode")
+
+    # waiting for user approval
+    if review_status in (None, "pending"):
+        logger.info("Run {} awaiting user approval for plan", state.get("run_id"))
+        return Command(
+            update={
+                "plan_review_status": "pending",
+                "status": "waiting_user_review",
+            },
+            goto="UserFeedbackNode",
+        )
+
+    # user approved
+    if review_status == "approved":
+        logger.info("Run {} plan approved by user", state.get("run_id"))
+        return Command(
+            update={
+                "plan_review_status": None,
+                "plan_review_comment": None,
+                "status": "plan_approved",
+            },
+            goto="WorkerTeamNode",
+        )
+
+    # user rejected -> loop back to planner with comment as guidance
+    if review_status == "rejected":
+        messages = state.get("messages", [])
+        if comment:
+            messages.append(SystemMessage(content=f"User feedback: {comment}", name="UserFeedback"))
+        logger.info("Run {} plan rejected by user, re-planning", state.get("run_id"))
+        return Command(
+            update={
+                "plan_review_status": None,
+                "status": "plan_rejected",
+                "messages": messages,
+            },
+            goto="PlannerNode",
+        )
+
+    # fallback
+    return Command(update={}, goto="PlannerNode")
 
 def WorkerTeamNode(state: NodeState):
     """A node that represents a team of workers handling tasks based on their states."""

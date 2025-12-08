@@ -8,10 +8,30 @@ from datetime import datetime
 from aiohttp import web
 from logger import logger
 
-from workflow import run_agent_workflow_async
+from workflow import run_agent_workflow_async, get_run_state, update_plan_feedback_state
 from settings import settings
 
 RUN_IDS_LOG = os.path.join(os.path.dirname(__file__), "run_ids.log")
+
+
+async def resume_with_feedback(run_id: str, approved: bool, comment: str | None = None) -> str:
+    """Apply user feedback to a pending plan and resume the workflow."""
+    state = update_plan_feedback_state(run_id, approved=approved, comment=comment)
+    if state is None:
+        raise ValueError(f"No cached state found for run_id {run_id}")
+
+    await run_agent_workflow_async(
+        user_input=state.get("user_input", ""),
+        run_id=run_id,
+        debug=settings.debug,
+        max_plan_iterations=settings.max_plan_iterations,
+        max_step_num=settings.max_step_num,
+        enable_background_investigation=settings.enable_background_investigation,
+        enable_clarification=settings.enable_clarification,
+        max_clarification_rounds=settings.max_clarification_rounds,
+        initial_state=state,
+    )
+    return run_id
 
 
 async def start_agent_workflow(user_input: str, run_id: str | None = None) -> str:
@@ -127,7 +147,7 @@ async def handle_stdin_command(text: str) -> None:
         logger.info("Status: Server is running")
         return
     if lower == 'help':
-        logger.info("Available commands: status, help, stop/exit/quit, run <run_id> <query>")
+        logger.info("Available commands: status, help, stop/exit/quit, run <run_id> <query>, plan <run_id>, approve <run_id> [comment], reject <run_id> <comment>")
         return
     if lower in ('list', 'list runs', 'list run_id', 'list run_ids'):
         runs = list_run_ids()
@@ -137,6 +157,50 @@ async def handle_stdin_command(text: str) -> None:
         logger.info("Last {} runs (oldest->newest):", len(runs))
         for r in runs:
             logger.info("{} | {} | {}", r["timestamp"], r["run_id"], r["query"])
+        return
+
+    if lower.startswith('plan '):
+        parts = text.split(maxsplit=1)
+        run_id = parts[1] if len(parts) > 1 else None
+        if not run_id:
+            logger.info("Usage: plan <run_id>")
+            return
+        state = get_run_state(run_id)
+        if not state:
+            logger.info("No state found for run_id={}", run_id)
+            return
+        plan = state.get("plan")
+        status = state.get("plan_review_status")
+        logger.info("Plan status for {}: {}", run_id, status)
+        logger.info("Plan content: {}", plan)
+        return
+
+    if lower.startswith('approve '):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 2:
+            logger.info("Usage: approve <run_id> [comment]")
+            return
+        run_id = parts[1]
+        comment = parts[2] if len(parts) == 3 else None
+        try:
+            await resume_with_feedback(run_id, approved=True, comment=comment)
+            logger.info("Run {} approved and resumed", run_id)
+        except Exception as e:
+            logger.error("Failed to approve {}: {}", run_id, e)
+        return
+
+    if lower.startswith('reject '):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            logger.info("Usage: reject <run_id> <comment>")
+            return
+        run_id = parts[1]
+        comment = parts[2]
+        try:
+            await resume_with_feedback(run_id, approved=False, comment=comment)
+            logger.info("Run {} rejected and sent back to planner", run_id)
+        except Exception as e:
+            logger.error("Failed to reject {}: {}", run_id, e)
         return
 
     run_id, query = _parse_run_command(text)
@@ -167,6 +231,29 @@ async def run_server(
     async def runs_handler(request: web.Request) -> web.Response:
         runs = list_run_ids()
         return web.json_response({'runs': runs})
+
+    async def plan_handler(request: web.Request) -> web.Response:
+        run_id = request.match_info.get('run_id')
+        state = get_run_state(run_id)
+        if not state:
+            return web.json_response({'error': 'run_id not found'}, status=404)
+        plan = state.get('plan')
+        if hasattr(plan, "model_dump"):
+            plan = plan.model_dump()
+        status = state.get('plan_review_status')
+        return web.json_response({'run_id': run_id, 'plan_review_status': status, 'plan': plan})
+
+    async def plan_feedback_handler(request: web.Request) -> web.Response:
+        run_id = request.match_info.get('run_id')
+        data = await request.json()
+        approved = bool(data.get('approved', False))
+        comment = data.get('comment')
+        try:
+            await resume_with_feedback(run_id, approved=approved, comment=comment)
+        except Exception as e:
+            logger.error("Feedback failed for {}: {}", run_id, e)
+            return web.json_response({'error': str(e)}, status=400)
+        return web.json_response({'run_id': run_id, 'approved': approved})
     
     # Main api endpoint for scanner.
     async def query_handler(request: web.Request) -> web.Response:
@@ -182,6 +269,8 @@ async def run_server(
     app.router.add_post('/echo', echo_handler)
     app.router.add_post('/query', query_handler)
     app.router.add_get('/runs', runs_handler)
+    app.router.add_get('/runs/{run_id}/plan', plan_handler)
+    app.router.add_post('/runs/{run_id}/plan/feedback', plan_feedback_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

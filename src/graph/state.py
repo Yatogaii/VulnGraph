@@ -14,6 +14,9 @@ class NodeState(MessagesState):
     plan_iterations: int
     plan: Optional[Plan]
 
+    plan_review_status: Optional[str]
+    plan_review_comment: Optional[str]
+
     final_report: str
     
 def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
@@ -32,5 +35,7 @@ def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
         "goto": state["goto"],
         "vulns": state["vulns"],
         "plan_iterations": state["plan_iterations"],
+        "plan_review_status": state.get("plan_review_status"),
+        "plan_review_comment": state.get("plan_review_comment"),
         "final_report": state["final_report"],
     }

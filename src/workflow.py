@@ -1,6 +1,7 @@
 import asyncio
 import os
 import uuid
+import copy
 from datetime import datetime
 from typing import Any
 from graph.state import NodeState
@@ -17,6 +18,9 @@ console = Console()
 
 # 报告输出目录
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
+
+# 简单的内存态缓存，后续可被 durable checkpointer 替换
+RUN_STATE_CACHE: dict[str, NodeState] = {}
 
 
 def _save_report_to_markdown(report: str, user_input: str) -> str:
@@ -47,6 +51,26 @@ def _save_report_to_markdown(report: str, user_input: str) -> str:
     
     return filepath
 
+
+def get_run_state(run_id: str) -> NodeState | None:
+    """Get the last cached state for a run_id (in-memory only)."""
+    return RUN_STATE_CACHE.get(run_id)
+
+
+def update_plan_feedback_state(run_id: str, approved: bool, comment: str | None = None) -> NodeState | None:
+    """Prepare a resumed state with user feedback applied.
+
+    Returns the new state (not yet executed) or None if not found.
+    """
+    state = RUN_STATE_CACHE.get(run_id)
+    if state is None:
+        return None
+    new_state = copy.deepcopy(state)
+    new_state["plan_review_status"] = "approved" if approved else "rejected"
+    if comment:
+        new_state["plan_review_comment"] = comment
+    return NodeState(new_state)
+
 async def run_agent_workflow_async(
     user_input: str,
     run_id: str | None = None,
@@ -75,6 +99,8 @@ async def run_agent_workflow_async(
             "vulns": [],
             "plan": None,
             "plan_iterations": 0,
+            "plan_review_status": None,
+            "plan_review_comment": None,
             "final_report": "",
         })
     else:
@@ -89,6 +115,11 @@ async def run_agent_workflow_async(
     ):
         try:
             final_state = s
+            # 缓存最近的状态，便于外部审批后恢复
+            if isinstance(s, dict):
+                run_id = s.get("run_id", run_id)
+                if run_id:
+                    RUN_STATE_CACHE[run_id] = copy.deepcopy(s)
             if isinstance(s, dict) and "messages" in s:
                 if len(s["messages"]) <= last_message_cnt:
                     continue
@@ -110,6 +141,12 @@ async def run_agent_workflow_async(
                         console.print(Pretty(serial))
             else:
                 console.print(Pretty(_serialize_for_print(s)))
+
+            # 如果等待用户审批，立即返回，留给外部触发恢复
+            if isinstance(s, dict) and s.get("plan_review_status") == "pending":
+                console.print("[yellow]Waiting for user approval of plan. Use approve/reject commands or API.[/yellow]")
+                logger.info(f"Run {run_id} waiting for plan approval")
+                return
         except Exception as e:
             console.print(f"Error processing output: {str(e)}")
     
