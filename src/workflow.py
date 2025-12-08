@@ -1,4 +1,6 @@
 import asyncio
+import os
+from datetime import datetime
 from typing import Any
 from graph.state import NodeState
 from graph.builder import graph
@@ -11,6 +13,38 @@ from langchain_core.load.serializable import Serializable
 from pydantic import BaseModel
 
 console = Console()
+
+# 报告输出目录
+REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
+
+
+def _save_report_to_markdown(report: str, user_input: str) -> str:
+    """Save the final report to a markdown file.
+    
+    Args:
+        report: The report content to save
+        user_input: The original user input (used for filename)
+        
+    Returns:
+        The path to the saved report file
+    """
+    # 确保报告目录存在
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    
+    # 生成文件名：时间戳 + 简化的用户输入
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # 清理用户输入作为文件名的一部分（只保留前30个字符，移除特殊字符）
+    safe_input = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in user_input[:30]).strip()
+    safe_input = safe_input.replace(' ', '_')
+    
+    filename = f"report_{timestamp}_{safe_input}.md"
+    filepath = os.path.join(REPORTS_DIR, filename)
+    
+    # 写入报告
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(report)
+    
+    return filepath
 
 async def run_agent_workflow_async(
     user_input: str,
@@ -68,6 +102,21 @@ async def run_agent_workflow_async(
                 console.print(Pretty(_serialize_for_print(s)))
         except Exception as e:
             console.print(f"Error processing output: {str(e)}")
+    
+    # 保存最终报告到 markdown 文件
+    if final_state and isinstance(final_state, dict):
+        # final_state 可能是 {"ReporterNode": {...}} 的形式
+        report_state = final_state.get("ReporterNode", final_state)
+        final_report = report_state.get("final_report", "") if isinstance(report_state, dict) else ""
+        
+        if final_report:
+            try:
+                report_path = _save_report_to_markdown(final_report, user_input)
+                console.print(f"\n[green]✓ Report saved to: {report_path}[/green]")
+                logger.info(f"Report saved to: {report_path}")
+            except Exception as e:
+                console.print(f"[red]Failed to save report: {str(e)}[/red]")
+                logger.error(f"Failed to save report: {str(e)}")
 
 
 def _serialize_for_print(obj: Any) -> Any:
