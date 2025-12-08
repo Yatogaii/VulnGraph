@@ -58,7 +58,7 @@ async def get_run_state_async(run_id: str) -> NodeState | None:
     cfg: RunnableConfig = cast(RunnableConfig, {"configurable": {"thread_id": run_id}})
     try:
         compiled_graph = await get_graph()
-        snapshot = compiled_graph.get_state(cfg)
+        snapshot = await compiled_graph.aget_state(cfg)
         if snapshot:
             values = None
             if hasattr(snapshot, "values"):
@@ -130,42 +130,47 @@ async def run_agent_workflow_async(
         "configurable": {"thread_id": run_id},
     })
 
-    async for s in compiled_graph.astream(
-        input=initial_state,
-        config=cfg,
-    ):
-        try:
-            final_state = s
-            # 缓存最近的状态，便于外部审批后恢复
-            if isinstance(s, dict) and "messages" in s:
-                if len(s["messages"]) <= last_message_cnt:
-                    continue
-                last_message_cnt = len(s["messages"])
-                message = s["messages"][-1]
-                if isinstance(message, tuple):
-                    console.print(Pretty(message))
-                else:
-                    # Prefer a structured print for message objects (langchain messages
-                    # often inherit from Serializable). Fall back to pretty_print for
-                    # runtime rendering when available.
-                    try:
-                        serial = _serialize_for_print(message)
-                    except Exception:
-                        # fallback to the existing method which prints nicely in
-                        # interactive environments
-                        message.pretty_print()
+    try:
+        async for s in compiled_graph.astream(
+            input=initial_state,
+            config=cfg,
+        ):
+            try:
+                final_state = s
+                # 缓存最近的状态，便于外部审批后恢复
+                if isinstance(s, dict) and "messages" in s:
+                    if len(s["messages"]) <= last_message_cnt:
+                        continue
+                    last_message_cnt = len(s["messages"])
+                    message = s["messages"][-1]
+                    if isinstance(message, tuple):
+                        console.print(Pretty(message))
                     else:
-                        console.print(Pretty(serial))
-            else:
-                console.print(Pretty(_serialize_for_print(s)))
+                        # Prefer a structured print for message objects (langchain messages
+                        # often inherit from Serializable). Fall back to pretty_print for
+                        # runtime rendering when available.
+                        try:
+                            serial = _serialize_for_print(message)
+                        except Exception:
+                            # fallback to the existing method which prints nicely in
+                            # interactive environments
+                            message.pretty_print()
+                        else:
+                            console.print(Pretty(serial))
+                else:
+                    console.print(Pretty(_serialize_for_print(s)))
 
-            # 如果等待用户审批，立即返回，留给外部触发恢复
-            if isinstance(s, dict) and s.get("plan_review_status") == "pending":
-                console.print("[yellow]Waiting for user approval of plan. Use approve/reject commands or API.[/yellow]")
-                logger.info(f"Run {run_id} waiting for plan approval")
-                return
-        except Exception as e:
-            console.print(f"Error processing output: {str(e)}")
+                # 如果等待用户审批，立即返回，留给外部触发恢复
+                if isinstance(s, dict) and s.get("plan_review_status") == "pending":
+                    console.print("[yellow]Waiting for user approval of plan. Use approve/reject commands or API.[/yellow]")
+                    logger.info(f"Run {run_id} waiting for plan approval")
+                    return
+            except Exception as e:
+                console.print(f"Error processing output: {str(e)}")
+    except Exception as e:
+        logger.exception(f"Workflow execution failed for run_id={run_id}: {e}")
+        console.print(f"[red]Workflow execution failed: {e}[/red]")
+        raise
     
     # 保存最终报告到 markdown 文件
     if final_state and isinstance(final_state, dict):
