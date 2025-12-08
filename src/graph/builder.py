@@ -25,9 +25,12 @@ from langgraph.graph.state import CompiledStateGraph
 CHECKPOINTS_DIR = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 CHECKPOINTS_DB = CHECKPOINTS_DIR / "checkpoints.sqlite"
-CHECKPOINTS_URL = f"sqlite+aiosqlite:///{CHECKPOINTS_DB}"
+# Ensure the db file exists to avoid aiosqlite open errors
+CHECKPOINTS_DB.touch(exist_ok=True)
+CHECKPOINTS_URL = str(CHECKPOINTS_DB.resolve())
 _saver_ctx: Any | None = None
 _checkpointer: AsyncSqliteSaver | None = None
+_setup_done: bool = False
 def decide_worker_team_goto(state: NodeState) -> str:
     """Decide which node the WorkerTeamNode should go to next based on state."""
     plan: Plan|None = state.get("plan", None)
@@ -118,6 +121,12 @@ async def get_graph() -> CompiledStateGraph:
     if _checkpointer is None:
         _saver_ctx = AsyncSqliteSaver.from_conn_string(CHECKPOINTS_URL)
         _checkpointer = await _saver_ctx.__aenter__()
+        # Run setup once to create tables
+        global _setup_done
+        if _checkpointer is not None and not _setup_done:
+            await _checkpointer.setup()
+            _setup_done = True
+
 
     g = _build_base_graph()
     compiled_graph = g.compile(checkpointer=_checkpointer)
