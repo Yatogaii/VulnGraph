@@ -92,7 +92,10 @@ async def stdin_listener(shutdown_event: asyncio.Event) -> None:
 
         # 处理其他用户输入（这里可以扩展业务逻辑）
         logger.info("Received stdin input: {}", text)
-        await handle_stdin_command(text)
+        try:
+            await handle_stdin_command(text)
+        except Exception as e:
+            logger.exception("Error handling stdin command: {}", e)
 
 
 def _parse_run_command(text: str) -> tuple[str | None, str]:

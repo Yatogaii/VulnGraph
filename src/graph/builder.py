@@ -73,8 +73,9 @@ def _build_base_graph() -> StateGraph:
     graph.add_edge(START, "CoordinatorNode")
     graph.add_edge("ReporterNode", END)
     graph.add_edge("PlannerNode", "UserFeedbackNode")
-    graph.add_edge("UserFeedbackNode", "PlannerNode")
-    graph.add_edge("UserFeedbackNode", "WorkerTeamNode")
+    # UserFeedbackNode uses Command with goto, so no static edges needed
+    # graph.add_edge("UserFeedbackNode", "PlannerNode")
+    # graph.add_edge("UserFeedbackNode", "WorkerTeamNode")
 
     graph.add_conditional_edges(
         source="WorkerTeamNode",
