@@ -1,7 +1,9 @@
 from graph.state import NodeState
 from pathlib import Path
-import sqlite3
+from typing import Any
+import aiosqlite
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from graph.nodes import (
     CoordinatorNode,
     TriageNode,
@@ -23,9 +25,9 @@ from langgraph.graph.state import CompiledStateGraph
 CHECKPOINTS_DIR = Path(__file__).resolve().parent.parent / "data"
 CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 CHECKPOINTS_DB = CHECKPOINTS_DIR / "checkpoints.sqlite"
-# Use an explicit sqlite3 connection to satisfy type expectations
-CHECKPOINTS_CONN = sqlite3.connect(str(CHECKPOINTS_DB))
-checkpointer = SqliteSaver(CHECKPOINTS_CONN)
+CHECKPOINTS_URL = f"sqlite+aiosqlite:///{CHECKPOINTS_DB}"
+_saver_ctx: Any | None = None
+_checkpointer: AsyncSqliteSaver | None = None
 def decide_worker_team_goto(state: NodeState) -> str:
     """Decide which node the WorkerTeamNode should go to next based on state."""
     plan: Plan|None = state.get("plan", None)
@@ -99,8 +101,24 @@ def _build_base_graph() -> StateGraph:
 
     return graph
 
-def build_graph() -> CompiledStateGraph:
-    graph = _build_base_graph()
-    return graph.compile(checkpointer=checkpointer)
 
-graph = build_graph()
+compiled_graph: CompiledStateGraph | None = None
+
+
+async def get_graph() -> CompiledStateGraph:
+    """Lazily initialize and return the compiled graph with async sqlite checkpointer.
+
+    We keep the saver open for the process lifetime by manually entering the
+    async context once and reusing it.
+    """
+    global compiled_graph, _checkpointer, _saver_ctx
+    if compiled_graph is not None:
+        return compiled_graph
+
+    if _checkpointer is None:
+        _saver_ctx = AsyncSqliteSaver.from_conn_string(CHECKPOINTS_URL)
+        _checkpointer = await _saver_ctx.__aenter__()
+
+    g = _build_base_graph()
+    compiled_graph = g.compile(checkpointer=_checkpointer)
+    return compiled_graph

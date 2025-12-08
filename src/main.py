@@ -8,7 +8,7 @@ from datetime import datetime
 from aiohttp import web
 from logger import logger
 
-from workflow import run_agent_workflow_async, get_run_state, update_plan_feedback_state
+from workflow import run_agent_workflow_async, get_run_state, get_run_state_async, update_plan_feedback_state
 from settings import settings
 
 RUN_IDS_LOG = os.path.join(os.path.dirname(__file__), "run_ids.log")
@@ -16,7 +16,7 @@ RUN_IDS_LOG = os.path.join(os.path.dirname(__file__), "run_ids.log")
 
 async def resume_with_feedback(run_id: str, approved: bool, comment: str | None = None) -> str:
     """Apply user feedback to a pending plan and resume the workflow."""
-    state = update_plan_feedback_state(run_id, approved=approved, comment=comment)
+    state = await update_plan_feedback_state(run_id, approved=approved, comment=comment)
     if state is None:
         raise ValueError(f"No cached state found for run_id {run_id}")
 
@@ -165,7 +165,7 @@ async def handle_stdin_command(text: str) -> None:
         if not run_id:
             logger.info("Usage: plan <run_id>")
             return
-        state = get_run_state(run_id)
+        state = await get_run_state_async(run_id)
         if not state:
             logger.info("No state found for run_id={}", run_id)
             return
@@ -236,7 +236,7 @@ async def run_server(
         run_id = request.match_info.get('run_id')
         if run_id is None:
             return web.json_response({'error': 'run_id is required'}, status=400)
-        state = get_run_state(run_id)
+        state = await get_run_state_async(run_id)
         if not state:
             return web.json_response({'error': 'run_id not found'}, status=404)
         plan = state.get('plan')

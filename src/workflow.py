@@ -5,7 +5,7 @@ import copy
 from datetime import datetime
 from typing import Any, cast
 from graph.state import NodeState
-from graph.builder import graph
+from graph.builder import get_graph
 from langchain_core.runnables.config import RunnableConfig
 
 from logger import logger
@@ -20,8 +20,6 @@ console = Console()
 # 报告输出目录
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
 
-# 简单的内存态缓存，辅以 sqlite checkpointer
-RUN_STATE_CACHE: dict[str, NodeState] = {}
 
 
 def _save_report_to_markdown(report: str, user_input: str) -> str:
@@ -54,10 +52,13 @@ def _save_report_to_markdown(report: str, user_input: str) -> str:
 
 
 def get_run_state(run_id: str) -> NodeState | None:
+    """Sync helper: returns cached state only. Use get_run_state_async for fresh state."""
+async def get_run_state_async(run_id: str) -> NodeState | None:
     """Get the last state for a run_id via checkpointer (fallback to memory)."""
     cfg: RunnableConfig = cast(RunnableConfig, {"configurable": {"thread_id": run_id}})
     try:
-        snapshot = graph.get_state(cfg)
+        compiled_graph = await get_graph()
+        snapshot = compiled_graph.get_state(cfg)
         if snapshot:
             values = None
             if hasattr(snapshot, "values"):
@@ -68,15 +69,15 @@ def get_run_state(run_id: str) -> NodeState | None:
                 return cast(NodeState, values)
     except Exception as e:
         logger.error(f"Failed to get state for {run_id} from checkpointer: {e}")
-    return RUN_STATE_CACHE.get(run_id)
+    return None
 
 
-def update_plan_feedback_state(run_id: str, approved: bool, comment: str | None = None) -> NodeState | None:
+async def update_plan_feedback_state(run_id: str, approved: bool, comment: str | None = None) -> NodeState | None:
     """Prepare a resumed state with user feedback applied.
 
     Returns the new state (not yet executed) or None if not found.
     """
-    state = get_run_state(run_id)
+    state = await get_run_state_async(run_id)
     if state is None:
         return None
     new_state = copy.deepcopy(state)
@@ -123,22 +124,19 @@ async def run_agent_workflow_async(
 
     last_message_cnt = 0
     final_state = None
+    compiled_graph = await get_graph()
     cfg: RunnableConfig = cast(RunnableConfig, {
         "recursion_limit": 100,
         "configurable": {"thread_id": run_id},
     })
 
-    async for s in graph.astream(
+    async for s in compiled_graph.astream(
         input=initial_state,
         config=cfg,
     ):
         try:
             final_state = s
             # 缓存最近的状态，便于外部审批后恢复
-            if isinstance(s, dict):
-                run_id = s.get("run_id", run_id)
-                if run_id:
-                    RUN_STATE_CACHE[run_id] = cast(NodeState, copy.deepcopy(s))
             if isinstance(s, dict) and "messages" in s:
                 if len(s["messages"]) <= last_message_cnt:
                     continue
