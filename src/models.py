@@ -26,8 +26,8 @@ def _init_kimi_k2() -> BaseChatModel:
     return model
 
 def _init_deepseek_v3_2() -> BaseChatModel:
-    model = ChatOpenAI(model="deepseek-v3.2",
-                             base_url="https://api.gptapi.us/v1",
+    model = ChatOpenAI(model="deepseek-chat",
+                             base_url="https://api.deepseek.com/v1",
                              api_key=SecretStr(settings.DEEPSEEK_KEY))
     return model
 
