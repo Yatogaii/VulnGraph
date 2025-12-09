@@ -1,4 +1,6 @@
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
+from typing_extensions import Annotated
+import operator
 from langgraph.graph import MessagesState
 from schemas.plans import Plan
 from schemas.vulns import Vuln
@@ -13,6 +15,9 @@ class NodeState(MessagesState):
 
     plan_iterations: int
     plan: Optional[Plan]
+    
+    # Parallel execution results: key=step_id, value=result
+    step_results: Annotated[Dict[str, Any], operator.or_]
 
     plan_review_status: Optional[str]
     plan_review_comment: Optional[str]

@@ -35,10 +35,23 @@ class Step(BaseModel):
       - target: The asset, CVE or scope this step targets
     """
 
-    step_type: Literal["asset_analysis", "vuln_analysis", "reporting"]
+    step_type: Literal[
+        "asset_analysis",
+        "vuln_discovery",
+        "vuln_detail",
+        "reporting",
+        "vuln_analysis",
+    ]
     title: str
     description: str
     target: str
+    stage: int = Field(
+        default=1, description="Execution stage (lower numbers run first)"
+    )
+    depends_on: List[str] = Field(
+        default_factory=list, description="List of step IDs this step depends on"
+    )
+    id: str = Field(default="", description="Unique identifier for the step")
 
     # Extra fields should not be allowed – keep the model strict to match the
     # prompt contract.
