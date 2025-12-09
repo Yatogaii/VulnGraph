@@ -7,6 +7,7 @@ from typing import Any, cast
 from graph.state import NodeState
 from graph.builder import get_graph
 from langchain_core.runnables.config import RunnableConfig
+from langgraph.types import Command
 
 from logger import logger
 
@@ -72,20 +73,6 @@ async def get_run_state_async(run_id: str) -> NodeState | None:
     return None
 
 
-async def update_plan_feedback_state(run_id: str, approved: bool, comment: str | None = None) -> NodeState | None:
-    """Prepare a resumed state with user feedback applied.
-
-    Returns the new state (not yet executed) or None if not found.
-    """
-    state = await get_run_state_async(run_id)
-    if state is None:
-        return None
-    new_state = copy.deepcopy(state)
-    new_state["plan_review_status"] = "approved" if approved else "rejected"
-    if comment:
-        new_state["plan_review_comment"] = comment
-    return cast(NodeState, new_state)
-
 async def run_agent_workflow_async(
     user_input: str,
     run_id: str | None = None,
@@ -96,6 +83,7 @@ async def run_agent_workflow_async(
     enable_clarification: bool | None = None,
     max_clarification_rounds: int | None = None,
     initial_state: NodeState | None = None,
+    resume_value: dict | None = None,
 ) -> None:
     # allow caller-provided run_id; fall back to state-provided or fresh uuid
     if initial_state is not None:
@@ -130,9 +118,11 @@ async def run_agent_workflow_async(
         "configurable": {"thread_id": run_id},
     })
 
+    workflow_input = Command(resume=resume_value) if resume_value is not None else initial_state
+
     try:
         async for s in compiled_graph.astream(
-            input=initial_state,
+            input=workflow_input,
             config=cfg,
         ):
             try:
@@ -161,10 +151,12 @@ async def run_agent_workflow_async(
                     console.print(Pretty(_serialize_for_print(s)))
 
                 # 如果等待用户审批，立即返回，留给外部触发恢复
-                if isinstance(s, dict) and s.get("plan_review_status") == "pending":
-                    console.print("[yellow]Waiting for user approval of plan. Use approve/reject commands or API.[/yellow]")
-                    logger.info(f"Run {run_id} waiting for plan approval")
-                    return
+                # Check for interrupt signal
+                if isinstance(s, dict) and "__interrupt__" in s:
+                     console.print("[yellow]Workflow interrupted. Waiting for user input.[/yellow]")
+                     logger.info(f"Run {run_id} interrupted")
+                     return
+
             except Exception as e:
                 console.print(f"Error processing output: {str(e)}")
     except Exception as e:
@@ -178,6 +170,10 @@ async def run_agent_workflow_async(
         report_state = final_state.get("ReporterNode", final_state)
         final_report = report_state.get("final_report", "") if isinstance(report_state, dict) else ""
         
+        # Try to get user_input from state if not provided (e.g. resume)
+        if not user_input and isinstance(report_state, dict):
+            user_input = report_state.get("user_input", "")
+
         if final_report:
             try:
                 report_path = _save_report_to_markdown(final_report, user_input)

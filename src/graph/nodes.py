@@ -10,7 +10,7 @@ from tools.vuln_analyzer import get_cve_details
 
 from langgraph.prebuilt import ToolNode
 from langchain_core.tools import tool
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, RemoveMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -141,54 +141,48 @@ def PlannerNode(state: NodeState):
 def UserFeedbackNode(state: NodeState):
     """A node that handles user feedback based on their states."""
     plan: Plan | None = state.get("plan")
-    review_status = state.get("plan_review_status")
-    comment = state.get("plan_review_comment")
 
     if plan is None:
         logger.warning("UserFeedbackNode called without plan; sending back to planner")
         return Command(update={}, goto="PlannerNode")
 
-    # waiting for user approval
-    if review_status in (None, "pending"):
-        logger.info("Run {} awaiting user approval for plan", state.get("run_id"))
-        return Command(
-            update={
-                "plan_review_status": "pending",
-                "status": "waiting_user_review",
-            },
-            # stop current execution; external feedback will resume via thread_id
-            goto="__end__",
-        )
+    # Interrupt execution and wait for user feedback
+    # The value returned by interrupt() will be the value passed to Command(resume=...)
+    # When first called, this will suspend execution.
+    # When resumed, feedback will contain the user's decision.
+    feedback = interrupt({
+        "type": "plan_approval",
+        "plan": plan.model_dump() if hasattr(plan, "model_dump") else plan,
+        "run_id": state.get("run_id")
+    })
+    
+    # feedback is expected to be a dict: {"approved": bool, "comment": str}
+    approved = feedback.get("approved", False)
+    comment = feedback.get("comment")
 
-    # user approved
-    if review_status == "approved":
+    if approved:
         logger.info("Run {} plan approved by user", state.get("run_id"))
         return Command(
             update={
-                "plan_review_status": None,
-                "plan_review_comment": None,
+                "plan_review_status": "approved",
+                "plan_review_comment": comment,
                 "status": "plan_approved",
             },
             goto="WorkerTeamNode",
         )
-
-    # user rejected -> loop back to planner with comment as guidance
-    if review_status == "rejected":
+    else:
         messages = state.get("messages", [])
         if comment:
             messages.append(SystemMessage(content=f"User feedback: {comment}", name="UserFeedback"))
         logger.info("Run {} plan rejected by user, re-planning", state.get("run_id"))
         return Command(
             update={
-                "plan_review_status": None,
+                "plan_review_status": "rejected",
                 "status": "plan_rejected",
                 "messages": messages,
             },
             goto="PlannerNode",
         )
-
-    # fallback
-    return Command(update={}, goto="PlannerNode")
 
 def WorkerTeamNode(state: NodeState):
     """A node that represents a team of workers handling tasks based on their states."""

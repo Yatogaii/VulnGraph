@@ -8,30 +8,11 @@ from datetime import datetime
 from aiohttp import web
 from logger import logger
 
-from workflow import run_agent_workflow_async, get_run_state, get_run_state_async, update_plan_feedback_state
+from workflow import run_agent_workflow_async, get_run_state, get_run_state_async
 from settings import settings
+from graph.builder import CHECKPOINTS_DB
 
 RUN_IDS_LOG = os.path.join(os.path.dirname(__file__), "run_ids.log")
-
-
-async def resume_with_feedback(run_id: str, approved: bool, comment: str | None = None) -> str:
-    """Apply user feedback to a pending plan and resume the workflow."""
-    state = await update_plan_feedback_state(run_id, approved=approved, comment=comment)
-    if state is None:
-        raise ValueError(f"No cached state found for run_id {run_id}")
-
-    await run_agent_workflow_async(
-        user_input=state.get("user_input", ""),
-        run_id=run_id,
-        debug=settings.debug,
-        max_plan_iterations=settings.max_plan_iterations,
-        max_step_num=settings.max_step_num,
-        enable_background_investigation=settings.enable_background_investigation,
-        enable_clarification=settings.enable_clarification,
-        max_clarification_rounds=settings.max_clarification_rounds,
-        initial_state=state,
-    )
-    return run_id
 
 
 async def start_agent_workflow(user_input: str, run_id: str | None = None) -> str:
@@ -143,6 +124,29 @@ def list_run_ids(limit: int = 50) -> list[dict[str, str]]:
     return entries
 
 
+def clear_run_ids() -> None:
+    """Clear the run_ids log file and sqlite checkpoints."""
+    try:
+        # Clear log file
+        if os.path.exists(RUN_IDS_LOG):
+            os.remove(RUN_IDS_LOG)
+            logger.info("Cleared run_ids log")
+        
+        # Clear sqlite checkpoints
+        db_path = str(CHECKPOINTS_DB)
+        # Remove main db file and potential wal/shm files
+        for path in [db_path, f"{db_path}-wal", f"{db_path}-shm"]:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    logger.info(f"Removed checkpoint file: {path}")
+                except OSError as e:
+                    logger.warning(f"Could not remove {path}: {e}")
+
+    except Exception as e:
+        logger.error("Failed to clear run data: {}", e)
+
+
 async def handle_stdin_command(text: str) -> None:
     """处理用户通过 stdin 输入的命令，支持 run_id。"""
     lower = text.lower()
@@ -150,7 +154,10 @@ async def handle_stdin_command(text: str) -> None:
         logger.info("Status: Server is running")
         return
     if lower == 'help':
-        logger.info("Available commands: status, help, stop/exit/quit, run <run_id> <query>, plan <run_id>, approve <run_id> [comment], reject <run_id> <comment>")
+        logger.info("Available commands: status, help, stop/exit/quit, run <run_id> <query>, plan <run_id>, approve <run_id> [comment], reject <run_id> <comment>, clear")
+        return
+    if lower == 'clear':
+        clear_run_ids()
         return
     if lower in ('list', 'list runs', 'list run_id', 'list run_ids'):
         runs = list_run_ids()
@@ -186,7 +193,17 @@ async def handle_stdin_command(text: str) -> None:
         run_id = parts[1]
         comment = parts[2] if len(parts) == 3 else None
         try:
-            await resume_with_feedback(run_id, approved=True, comment=comment)
+            await run_agent_workflow_async(
+                user_input="",
+                run_id=run_id,
+                debug=settings.debug,
+                max_plan_iterations=settings.max_plan_iterations,
+                max_step_num=settings.max_step_num,
+                enable_background_investigation=settings.enable_background_investigation,
+                enable_clarification=settings.enable_clarification,
+                max_clarification_rounds=settings.max_clarification_rounds,
+                resume_value={"approved": True, "comment": comment},
+            )
             logger.info("Run {} approved and resumed", run_id)
         except Exception as e:
             logger.error("Failed to approve {}: {}", run_id, e)
@@ -200,7 +217,17 @@ async def handle_stdin_command(text: str) -> None:
         run_id = parts[1]
         comment = parts[2]
         try:
-            await resume_with_feedback(run_id, approved=False, comment=comment)
+            await run_agent_workflow_async(
+                user_input="",
+                run_id=run_id,
+                debug=settings.debug,
+                max_plan_iterations=settings.max_plan_iterations,
+                max_step_num=settings.max_step_num,
+                enable_background_investigation=settings.enable_background_investigation,
+                enable_clarification=settings.enable_clarification,
+                max_clarification_rounds=settings.max_clarification_rounds,
+                resume_value={"approved": False, "comment": comment},
+            )
             logger.info("Run {} rejected and sent back to planner", run_id)
         except Exception as e:
             logger.error("Failed to reject {}: {}", run_id, e)
@@ -235,6 +262,10 @@ async def run_server(
         runs = list_run_ids()
         return web.json_response({'runs': runs})
 
+    async def clear_runs_handler(request: web.Request) -> web.Response:
+        clear_run_ids()
+        return web.json_response({'status': 'cleared'})
+
     async def plan_handler(request: web.Request) -> web.Response:
         run_id = request.match_info.get('run_id')
         if run_id is None:
@@ -256,7 +287,17 @@ async def run_server(
         approved = bool(data.get('approved', False))
         comment = data.get('comment')
         try:
-            await resume_with_feedback(run_id, approved=approved, comment=comment)
+            await run_agent_workflow_async(
+                user_input="",
+                run_id=run_id,
+                debug=settings.debug,
+                max_plan_iterations=settings.max_plan_iterations,
+                max_step_num=settings.max_step_num,
+                enable_background_investigation=settings.enable_background_investigation,
+                enable_clarification=settings.enable_clarification,
+                max_clarification_rounds=settings.max_clarification_rounds,
+                resume_value={"approved": approved, "comment": comment},
+            )
         except Exception as e:
             logger.error("Feedback failed for {}: {}", run_id, e)
             return web.json_response({'error': str(e)}, status=400)
@@ -276,6 +317,7 @@ async def run_server(
     app.router.add_post('/echo', echo_handler)
     app.router.add_post('/query', query_handler)
     app.router.add_get('/runs', runs_handler)
+    app.router.add_delete('/runs', clear_runs_handler)
     app.router.add_get('/runs/{run_id}/plan', plan_handler)
     app.router.add_post('/runs/{run_id}/plan/feedback', plan_feedback_handler)
 
