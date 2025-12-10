@@ -65,38 +65,60 @@ Different types of steps are handled by different worker agents:
    - Collect system configuration information
    - Handled by: **AssetsAnalyzer**
 
-2. **Vulnerability Analysis Steps** (`step_type: "vuln_analysis"`):
-   - Analyze specific CVEs and their impact
-   - Perform code analysis (e.g., CodeQL scanning)
-   - Check if vulnerabilities affect specific assets
-   - Assess exploitability and severity
-   - Handled by: **VulnAnalyzer**
+2. **Vulnerability Discovery Steps** (`step_type: "vuln_discovery"`):
+   - Search for CVEs affecting a specific target (e.g., "Windows 10", "Apache Struts").
+   - Enumerate potential vulnerabilities based on asset info.
+   - Handled by: **VulnDiscoveryNode**
 
-3. **Reporting Steps** (`step_type: "reporting"`):
+3. **Vulnerability Detail Steps** (`step_type: "vuln_detail"`):
+   - Fetch detailed information for a specific CVE ID.
+   - Analyze impact and severity for a specific vulnerability.
+   - Handled by: **VulnDetailNode**
+
+4. **Reporting Steps** (`step_type: "reporting"`):
    - Generate security reports
    - Create Jira tickets for remediation
    - Summarize findings and recommendations
    - Handled by: **Reporter**
 
-## Exclusions
+## Execution Logic (Stage & Dependencies)
 
-- **No Direct Remediation**:
-  - The plan should focus on analysis and reporting
-  - Actual patching or remediation is out of scope
-  - Only recommendations for remediation should be included in reports
+To enable efficient parallel execution, you must structure your plan using `stage` and `depends_on`:
 
-- **No External System Access**:
-  - Do not plan steps that require external API access unless explicitly enabled
-  - Focus on analysis of provided information and local scanning capabilities
+1. **Stage (`stage`)**:
+   - Assign a numeric stage to each step (starting from 1).
+   - Steps in the same stage **can be executed in parallel** if they don't depend on each other.
+   - Lower stages run before higher stages.
+   - Example:
+     - Stage 1: Discovery steps (e.g., "Find CVEs for Windows")
+     - Stage 2: Detail analysis steps (e.g., "Analyze CVE-2023-1234")
 
-## Analysis Framework
+2. **Dependencies (`depends_on`)**:
+   - If a step strictly requires the output of another step, list the dependency's `id` in `depends_on`.
+   - Example: "Analyze CVE-2023-1234" depends on "Find CVEs for Windows".
 
-When planning security analysis, consider these key aspects:
+## Output Format
 
-1. **Asset Identification**:
-   - What assets need to be analyzed?
-   - What are the asset types (servers, applications, repositories)?
-   - What software/dependencies are running on each asset?
+**CRITICAL: You MUST output a valid JSON object matching the interface below. Do not include any text before or after the JSON. Output ONLY the raw JSON.**
+
+```ts
+interface Step {
+    id: string;          // Unique ID, e.g., "step-1"
+    step_type: "asset_analysis" | "vuln_discovery" | "vuln_detail" | "reporting";
+    title: string;       // Short title
+    description: string; // Detailed instructions
+    target: string;      // The specific asset, CVE, or scope
+    stage: number;       // Execution stage (1, 2, 3...)
+    depends_on: string[];// List of step IDs this step depends on
+}
+
+interface Plan {
+    steps: Step[];
+    has_enough_context: boolean; // Set to true if NO further steps are needed
+    finish_plan: boolean;        // Set to true if the plan is complete
+}
+```
+
 
 2. **Vulnerability Assessment**:
    - What known vulnerabilities (CVEs) are relevant?

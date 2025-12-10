@@ -78,7 +78,7 @@ class Plan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def _extract_json_from_text(text: str) -> Optional[str]:
+def extract_json_from_text(text: str) -> Optional[str]:
     """Try to extract a JSON substring from a possibly noisy LLM output.
 
     The function attempts the following heuristics in order:
@@ -171,7 +171,7 @@ def parse_plan_from_llm(text: str, *, raise_on_error: bool = True) -> Optional[P
     If `raise_on_error` is True, JSON parsing or validation errors are raised
     to help debugging; otherwise, None is returned on failure.
     """
-    json_str = _extract_json_from_text(text)
+    json_str = extract_json_from_text(text)
     if not json_str:
         # Maybe the whole text is JSON, try to parse as-is
         json_str = text.strip()
@@ -205,4 +205,4 @@ def parse_plan_from_llm(text: str, *, raise_on_error: bool = True) -> Optional[P
         return None
 
 
-__all__ = ["Plan", "Step", "parse_plan_from_llm"]
+__all__ = ["Plan", "Step", "parse_plan_from_llm", "extract_json_from_text"]

@@ -1,7 +1,7 @@
 from graph.state import NodeState, preserve_state_meta_fields
-from schemas.plans import parse_plan_from_llm, Plan
+from schemas.plans import parse_plan_from_llm, Plan, Step
 from schemas.vulns import Vuln, ImpactedSoftware, parse_vulns_from_llm
-from typing import Annotated
+from typing import Annotated, Any
 from prompts.template import apply_prompt_template
 from models import get_model_by_type
 from logger import logger
@@ -10,12 +10,22 @@ from tools.vuln_analyzer import get_cve_details
 
 from langgraph.prebuilt import ToolNode
 from langchain_core.tools import tool
-from langgraph.types import Command, interrupt
+from langgraph.types import Command, interrupt, Send
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, RemoveMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from settings import settings
+from graph.subgraphs.asset_analysis import asset_analysis_subgraph
+from graph.subgraphs.vuln_detail import vuln_detail_subgraph
+from graph.subgraphs.vuln_discovery import vuln_discovery_subgraph
 
+# Configuration for parallel execution
+STEP_CONFIG = {
+    "asset_analysis": {"parallel": True},
+    "vuln_detail":    {"parallel": True},
+    "vuln_discovery": {"parallel": False}, # Keep discovery serial for stability
+    "reporting":      {"parallel": False},
+}
 
 @tool
 def handoff_to_planner(
@@ -76,9 +86,86 @@ def CoordinatorNode(state: NodeState):
         goto=goto,
     )
 
+def PlanRefineNode(state: NodeState):
+    """
+    Refines the plan based on discovery results.
+    Converts discovered CVE IDs into specific vuln_detail steps.
+    """
+    plan: Plan | None = state.get("plan")
+    step_results = state.get("step_results", {})
+    
+    if not plan or not plan.steps:
+        return Command(goto="WorkerTeamNode")
+        
+    new_steps = []
+    # Find discovery steps that have results
+    for step in plan.steps:
+        if step.step_type == "vuln_discovery" and step.id in step_results:
+            result = step_results[step.id]
+            if isinstance(result, dict) and result.get("type") == "vuln_discovery":
+                cve_ids = result.get("cve_ids", [])
+                
+                # Generate detail steps for each CVE
+                for i, cve_id in enumerate(cve_ids):
+                    # Check if we already have a step for this CVE to avoid duplicates
+                    # Simple check: look for target match
+                    if any(s.target == cve_id for s in plan.steps + new_steps):
+                        continue
+                        
+                    new_step = Step(
+                        id=f"detail-{step.id}-{i}",
+                        step_type="vuln_detail",
+                        title=f"Analyze {cve_id}",
+                        description=f"Fetch detailed information and impact analysis for {cve_id}",
+                        target=cve_id,
+                        stage=step.stage + 1, # Run in next stage
+                        depends_on=[step.id]
+                    )
+                    new_steps.append(new_step)
+                    
+    if new_steps:
+        plan.steps.extend(new_steps)
+        logger.info(f"PlanRefineNode: Added {len(new_steps)} new steps based on discovery.")
+        return Command(
+            update={"plan": plan},
+            goto="WorkerTeamNode"
+        )
+    
+    return Command(goto="WorkerTeamNode")
+
 def TriageNode(state: NodeState):
-    """A node that triages vulnerabilities based on their states."""
-    pass
+    """
+    Aggregates results from all steps and prepares final vulnerability list.
+    """
+    plan: Plan | None = state.get("plan")
+    step_results = state.get("step_results", {})
+    vulns: list[Vuln] = state.get("vulns", []) or []
+    
+    # Process results from vuln_detail steps
+    for step_id, result in step_results.items():
+        # Check if this result contains vulns
+        if isinstance(result, dict) and "vulns" in result:
+            found_vulns = result["vulns"]
+            if isinstance(found_vulns, list):
+                # Merge vulns, avoiding duplicates by ID
+                existing_ids = {v.id for v in vulns}
+                for v in found_vulns:
+                    if isinstance(v, Vuln) and v.id not in existing_ids:
+                        vulns.append(v)
+                        existing_ids.add(v.id)
+                    elif isinstance(v, dict) and v.get("id") not in existing_ids:
+                        # Handle dict if not parsed to object yet
+                        try:
+                            vuln_obj = Vuln(**v)
+                            vulns.append(vuln_obj)
+                            existing_ids.add(vuln_obj.id)
+                        except Exception as e:
+                            logger.error(f"Error parsing vuln in TriageNode: {e}")
+
+    return Command(
+        update={"vulns": vulns},
+        goto="ReporterNode"
+    )
 
 def PlannerNode(state: NodeState):
     """A node that plans actions based on the states of other nodes."""
@@ -184,253 +271,254 @@ def UserFeedbackNode(state: NodeState):
             goto="PlannerNode",
         )
 
+def _deps_done(step: Step, plan: Plan, step_results: dict) -> bool:
+    """Check if all dependencies of a step are met."""
+    if not step.depends_on:
+        return True
+    
+    # Check if all dependent steps have results in step_results
+    # Note: We check step_results, not step.execution_res, because parallel nodes update step_results
+    for dep_id in step.depends_on:
+        if dep_id not in step_results:
+            return False
+    return True
+
+def _node_for_step_type(step_type: str) -> str:
+    """Map step_type to node name."""
+    mapping = {
+        "asset_analysis": "AssetsAnalzerNode",
+        "vuln_discovery": "VulnDiscoveryNode",
+        "vuln_detail": "VulnDetailNode",
+        "reporting": "ReporterNode", # Usually not called by WorkerTeam, but for completeness
+    }
+    return mapping.get(step_type, "WorkerTeamNode")
+
 def WorkerTeamNode(state: NodeState):
-    """A node that represents a team of workers handling tasks based on their states."""
-    pass
-
-
-# ============ Asset Analysis Tools ============
-
-@tool
-def get_all_assets_tool() -> str:
-    """Get all assets in the organization, including both hardware servers and software projects.
-    
-    Returns a list of all assets with their basic information (id, name, type, description, tags).
-    Use this to get an overview of all assets before diving into specific ones.
     """
-    from schemas.assets import get_all_assets
-    
-    assets = get_all_assets()
-    result_parts = ["# All Assets\n"]
-    
-    hardware_assets = [a for a in assets if a.asset_type == "hardware"]
-    software_assets = [a for a in assets if a.asset_type == "software"]
-    
-    result_parts.append(f"## Hardware Assets ({len(hardware_assets)})\n")
-    for asset in hardware_assets:
-        result_parts.append(f"- **{asset.id}**: {asset.name} - {asset.description or 'N/A'} (tags: {', '.join(asset.tags)})")
-    
-    result_parts.append(f"\n## Software Assets ({len(software_assets)})\n")
-    for asset in software_assets:
-        result_parts.append(f"- **{asset.id}**: {asset.name} - {asset.description or 'N/A'} (tags: {', '.join(asset.tags)})")
-    
-    return "\n".join(result_parts)
-
-
-@tool
-def get_hardware_asset_info_tool(asset_id: str) -> str:
-    """Get detailed information about a hardware server asset.
-    
-    Returns the server's OS, installed services/software with versions, and exposed ports.
-    This is useful for identifying potential vulnerabilities in server software.
-    
-    Args:
-        asset_id: The ID or name of the hardware asset (e.g., "hw-001" or "prod-web-server-01")
+    Orchestrates the execution of the plan.
+    Schedules steps based on stage, dependencies, and parallel configuration.
     """
-    from schemas.assets import get_hardware_asset_info
+    plan: Plan | None = state.get("plan")
+    step_results = state.get("step_results", {})
     
-    hw = get_hardware_asset_info(asset_id)
-    if not hw:
-        return f"Hardware asset '{asset_id}' not found."
-    
-    result_parts = [
-        f"# Hardware Asset: {hw.name}",
-        f"- **ID**: {hw.id}",
-        f"- **Description**: {hw.description or 'N/A'}",
-        f"- **OS**: {hw.os} {hw.os_version}",
-        f"- **IP Address**: {hw.ip_address or 'N/A'}",
-        f"- **Tags**: {', '.join(hw.tags)}",
-        f"\n## Installed Services ({len(hw.services)})\n",
-    ]
-    
-    for svc in hw.services:
-        port_info = f"Port {svc.exposed_port}/{svc.protocol}" if svc.exposed_port else "No exposed port"
-        result_parts.append(f"- **{svc.name}** v{svc.version} ({svc.vendor or 'Unknown'}) - {port_info}")
-    
-    return "\n".join(result_parts)
+    if not plan or not plan.steps:
+        logger.warning("WorkerTeamNode called without plan")
+        return Command(goto="PlannerNode")
 
+    # 0. Check if we need to refine the plan (Discovery -> Detail)
+    # If we have discovery results that haven't generated detail steps yet
+    # Logic: Find discovery steps with results, check if any step depends on them
+    # If no step depends on a finished discovery step, it likely needs refinement
+    # BUT PlanRefineNode handles the "already generated" check.
+    # So we just check if there are ANY finished discovery steps.
+    # Optimization: Only go to Refine if we haven't visited it for these results?
+    # For now, let's rely on PlanRefineNode's idempotency.
+    # We can check if there are discovery steps with results.
+    has_discovery_results = any(
+        s.step_type == "vuln_discovery" and s.id in step_results 
+        for s in plan.steps
+    )
+    
+    # Simple heuristic: If we just finished a discovery step, we should probably refine.
+    # But how do we know we "just" finished?
+    # Let's just always check PlanRefineNode if there are discovery results.
+    # PlanRefineNode will return immediately if nothing to do.
+    # To avoid infinite loop, PlanRefineNode must NOT return goto="PlanRefineNode".
+    # And WorkerTeam must have a way to know if it should skip Refine.
+    # Actually, PlanRefineNode returns goto="WorkerTeamNode".
+    # So if WorkerTeam sends to Refine, Refine sends back.
+    # We need to avoid ping-pong if Refine did nothing.
+    # Maybe we can check if we have pending discovery steps?
+    # If all discovery steps are done, and we have results, we might need refine.
+    
+    # Let's try a different approach:
+    # If there are discovery steps that are DONE (in step_results),
+    # AND we haven't generated detail steps for them (checked by PlanRefineNode),
+    # then go to Refine.
+    # Since PlanRefineNode is cheap (just logic), we can visit it.
+    # But we need to avoid loop: Worker -> Refine -> Worker -> Refine ...
+    # We can use a state flag? Or just let Refine handle it?
+    # If Refine adds steps, it updates plan.
+    # If Refine does nothing, it returns.
+    # If we blindly go to Refine, we loop.
+    
+    # Better: Only go to Refine if we have *newly* finished discovery steps?
+    # Hard to track "newly".
+    
+    # Alternative: PlanRefineNode is part of the flow.
+    # But we want to run it only when needed.
+    
+    # Let's look at the steps.
+    # If we have a discovery step that is done, and NO step depends on it, 
+    # it's a strong signal that we need to refine (unless it's a leaf discovery).
+    # Most discovery steps in our flow are meant to spawn details.
+    
+    candidates_for_refine = []
+    for step in plan.steps:
+        if step.step_type == "vuln_discovery" and step.id in step_results:
+            # Check if any step depends on this one
+            is_depended_on = any(step.id in s.depends_on for s in plan.steps)
+            if not is_depended_on:
+                candidates_for_refine.append(step)
+                
+    if candidates_for_refine:
+        return Command(goto="PlanRefineNode")
 
-@tool  
-def get_software_asset_info_tool(asset_id: str) -> str:
-    """Get detailed information about a software project asset.
+    # 1. Find pending steps (not in step_results)
+    pending_steps = [s for s in plan.steps if s.id not in step_results]
     
-    Returns the project's language, repository, and open-source dependencies with versions.
-    This is useful for identifying potential vulnerabilities in third-party libraries.
+    if not pending_steps:
+        # All steps done
+        return Command(goto="TriageNode")
+        
+    # 2. Filter runnable steps (dependencies met)
+    runnable = [s for s in pending_steps if _deps_done(s, plan, step_results)]
     
-    Args:
-        asset_id: The ID or name of the software asset (e.g., "sw-001" or "ecommerce-backend")
-    """
-    from schemas.assets import get_software_asset_info
+    if not runnable:
+        # Deadlock or waiting?
+        # If pending but not runnable, it means dependencies are missing.
+        # If dependencies are missing but not in pending, they are done?
+        # _deps_done checks step_results.
+        # So if not runnable, it means dependencies are NOT in step_results.
+        # If dependencies are not in step_results and not in pending... wait, they must be in pending.
+        # So we are waiting for dependencies.
+        # But if we are in WorkerTeamNode, it means some node just finished and returned here.
+        # So there should be *something* runnable, unless the plan is invalid (cycle).
+        logger.error("No runnable steps found, but plan is not complete. Possible deadlock.")
+        return Command(goto="TriageNode") # Fail safe
+        
+    # 3. Group by stage (min stage)
+    min_stage = min(s.stage for s in runnable)
+    runnable_at_stage = [s for s in runnable if s.stage == min_stage]
     
-    sw = get_software_asset_info(asset_id)
-    if not sw:
-        return f"Software asset '{asset_id}' not found."
+    # 4. Apply parallel strategy
+    jobs = []
+    serial_step = None
     
-    result_parts = [
-        f"# Software Asset: {sw.name}",
-        f"- **ID**: {sw.id}",
-        f"- **Description**: {sw.description or 'N/A'}",
-        f"- **Language**: {sw.language}",
-        f"- **Repository**: {sw.repository or 'N/A'}",
-        f"- **Tags**: {', '.join(sw.tags)}",
-        f"\n## Dependencies ({len(sw.dependencies)})\n",
-    ]
-    
-    # Group by package manager
-    deps_by_pm: dict[str, list] = {}
-    for dep in sw.dependencies:
-        if dep.package_manager not in deps_by_pm:
-            deps_by_pm[dep.package_manager] = []
-        deps_by_pm[dep.package_manager].append(dep)
-    
-    for pm, deps in deps_by_pm.items():
-        result_parts.append(f"### {pm.upper()}")
-        for dep in deps:
-            scope_info = f" ({dep.scope})" if dep.scope else ""
-            result_parts.append(f"- {dep.name}: {dep.version}{scope_info}")
-    
-    return "\n".join(result_parts)
+    for step in runnable_at_stage:
+        config = STEP_CONFIG.get(step.step_type, {"parallel": False})
+        
+        if config["parallel"]:
+            node_name = _node_for_step_type(step.step_type)
+            jobs.append(Send(node_name, {"step_id": step.id}))
+        else:
+            # Serial step
+            if serial_step is None:
+                serial_step = step
+                
+    # 5. Dispatch
+    if jobs:
+        logger.info(f"WorkerTeamNode: Dispatching {len(jobs)} parallel jobs")
+        return jobs
+        
+    if serial_step:
+        node_name = _node_for_step_type(serial_step.step_type)
+        logger.info(f"WorkerTeamNode: Dispatching serial job: {serial_step.id} ({node_name})")
+        return [Send(node_name, {"step_id": serial_step.id})]
+        
+    return Command(goto="TriageNode")
 
-
-asset_tools = [get_all_assets_tool, get_hardware_asset_info_tool, get_software_asset_info_tool]
-
-asset_tool_node = ToolNode(asset_tools)
 
 
 def AssetsAnalzerNode(state: NodeState):
-    """A node that analyzes assets based on their states.
-    
-    Uses LLM with tools to analyze hardware servers and software projects.
     """
-    prompt = apply_prompt_template("asset_analyzer", state)
+    Wrapper node for Asset Analysis SubGraph.
+    Invokes the subgraph for a specific step and updates step_results.
+    """
+    step_id = state.get("step_id")
+    plan = state.get("plan")
     
-    # 获取当前要执行的 step 信息，添加到 prompt
-    plan: Plan | None = state.get("plan")
-    current_step = None
-    if plan and plan.steps:
-        for step in plan.steps:
-            if step.execution_res is None and step.step_type == "asset_analysis":
-                current_step = step
-                break
-    
-    if current_step:
-        prompt.append(SystemMessage(content=f"""
-Current task:
-- Title: {current_step.title}
-- Target: {current_step.target}
-- Description: {current_step.description}
-"""))
-    
-    response = (
-        get_model_by_type("agentic")
-        .bind_tools(asset_tools)
-        .invoke(input=prompt)
-    )
-    
-    # 如果没有 tool calls，说明分析完成
-    if not response.tool_calls:
-        content = response.content
-        if isinstance(content, str):
-            execution_result = content
-        elif content:
-            execution_result = str(content)
-        else:
-            execution_result = "Asset analysis completed."
+    if not step_id or not plan:
+        logger.error("AssetsAnalzerNode called without step_id or plan")
+        return Command(goto="WorkerTeamNode")
         
-        # 更新第一个未完成的 asset_analysis step 的 execution_res
-        if plan and plan.steps:
-            for step in plan.steps:
-                if step.execution_res is None and step.step_type == "asset_analysis":
-                    step.execution_res = execution_result
-                    break
+    # Find the step
+    step = next((s for s in plan.steps if s.id == step_id), None)
+    if not step:
+        logger.error(f"Step {step_id} not found in plan")
+        return Command(goto="WorkerTeamNode")
         
-        # 清理旧的 tool messages
-        messages_to_delete = []
-        for m in state["messages"]:
-            if isinstance(m, (ToolMessage, AIMessage)):
-                if m.id and m.id != response.id:
-                    messages_to_delete.append(RemoveMessage(id=m.id))
-        
-        logger.info(f"AssetsAnalzerNode: Completed asset analysis")
-        
-        return Command(
-            update={
-                "plan": plan,
-                "messages": [response] + messages_to_delete,
-            },
-        )
+    # Invoke subgraph
+    sub_state = {
+        "messages": [], # Isolated messages
+        "step": step,
+        "result": None
+    }
     
-    # 有 tool calls，继续循环
-    return Command(
-        update={
-            "messages": [response],
-            "plan": plan,
-        },
-    )
-def search_ddgs_tool(query: str):
-    """Search for a topic using DuckDuckGo."""
-    return search_topic_by_ddgs(query)
-
-@tool
-def search_cve_tool(cve_id: str):
-    """Search for a CVE by ID using NVD."""
-    return get_cve_details(cve_id)
-
-vuln_tools = [search_ddgs_tool, search_cve_tool]
-
-vuln_tool_node = ToolNode(vuln_tools)
-
-def VulnAnalyzerNode(state: NodeState):
-    """A node that analyzes vulnerabilities based on their states."""
-    prompt = apply_prompt_template("vuln_analyzer", state)
-    
-    tools = [search_ddgs_tool, search_cve_tool]
-    
-    response = (
-        get_model_by_type("agentic")
-        .bind_tools(tools)
-        .invoke(input=prompt)
-    )
-
-    # not an tool call
-    vulns = []
-    plan: Plan | None = state.get("plan")
-    if len(response.tool_calls) == 0 and response.content and isinstance(response.content, str):
-        parsed_vulns = parse_vulns_from_llm(response.content, raise_on_error=False)
-        if parsed_vulns:
-            vulns.extend(parsed_vulns)
-    
-        # 更新第一个未完成的 step 的 execution_res
-        if plan and plan.steps:
-            for step in plan.steps:
-                if step.execution_res is None:
-                    step.execution_res = response.content if response.content else "No response content"
-                    break
-
-    if not response.tool_calls:
-        # 我们寻找 State 里那些 "过期的" ToolCall 和 ToolMessage
-        messages_to_delete = []
-        for m in state["messages"]:
-            if isinstance(m, (ToolMessage, AIMessage)):
-                # 只有当这是历史消息（不是本次刚生成的）才删除
-                # 逻辑可以根据需求定制，比如：删除除了 HumanMessage 以外的所有旧消息
-                if m.id != None and m.id != response.id: 
-                     messages_to_delete.append(RemoveMessage(id=m.id))
-        return Command(
-            update={
-                "messages": [response] + messages_to_delete,
-                "vulns": vulns,
-                "plan": plan,  # 返回更新后的 plan
-            },
-        )
+    result = asset_analysis_subgraph.invoke(sub_state)
+    execution_result = result.get("result")
     
     return Command(
         update={
-            "messages": [response],
-            "vulns": vulns,
-            "plan": plan,  # 返回更新后的 plan
+            "step_results": {step_id: execution_result}
         },
+        goto="WorkerTeamNode"
     )
+
+def VulnDiscoveryNode(state: NodeState):
+    """
+    Wrapper node for Vuln Discovery SubGraph.
+    """
+    step_id = state.get("step_id")
+    plan = state.get("plan")
+    
+    if not step_id or not plan:
+        logger.error("VulnDiscoveryNode called without step_id or plan")
+        return Command(goto="WorkerTeamNode")
+        
+    step = next((s for s in plan.steps if s.id == step_id), None)
+    if not step:
+        logger.error(f"Step {step_id} not found in plan")
+        return Command(goto="WorkerTeamNode")
+        
+    sub_state = {
+        "messages": [],
+        "step": step,
+        "result": None
+    }
+    
+    result = vuln_discovery_subgraph.invoke(sub_state)
+    discovery_result = result.get("result")
+    
+    return Command(
+        update={
+            "step_results": {step_id: discovery_result}
+        },
+        goto="WorkerTeamNode"
+    )
+
+def VulnDetailNode(state: NodeState):
+    """
+    Wrapper node for Vuln Detail SubGraph.
+    """
+    step_id = state.get("step_id")
+    plan = state.get("plan")
+    
+    if not step_id or not plan:
+        logger.error("VulnDetailNode called without step_id or plan")
+        return Command(goto="WorkerTeamNode")
+        
+    step = next((s for s in plan.steps if s.id == step_id), None)
+    if not step:
+        logger.error(f"Step {step_id} not found in plan")
+        return Command(goto="WorkerTeamNode")
+        
+    sub_state = {
+        "messages": [],
+        "step": step,
+        "result": None
+    }
+    
+    result = vuln_detail_subgraph.invoke(sub_state)
+    detail_result = result.get("result")
+    
+    return Command(
+        update={
+            "step_results": {step_id: detail_result}
+        },
+        goto="WorkerTeamNode"
+    )
+
 
 def ReporterNode(state: NodeState):
     """A node that generates reports based on the states of other nodes."""

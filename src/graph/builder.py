@@ -11,9 +11,9 @@ from graph.nodes import (
     UserFeedbackNode,
     WorkerTeamNode,
     AssetsAnalzerNode,
-    VulnAnalyzerNode,
-    vuln_tool_node,
-    asset_tool_node,
+    VulnDetailNode,
+    VulnDiscoveryNode,
+    PlanRefineNode,
     ReporterNode
 )
 from schemas.plans import Plan
@@ -31,79 +31,32 @@ CHECKPOINTS_URL = str(CHECKPOINTS_DB.resolve())
 _saver_ctx: Any | None = None
 _checkpointer: AsyncSqliteSaver | None = None
 _setup_done: bool = False
-def decide_worker_team_goto(state: NodeState) -> str:
-    """Decide which node the WorkerTeamNode should go to next based on state."""
-    plan: Plan|None = state.get("plan", None)
-    if plan is None:
-        raise ValueError("No plan found in state for WorkerTeamNode decision.")
-    if not plan.steps:
-        return "ReporterNode"
 
-    # Find first unfinished step
-    incomplete_step = None
-    for step in plan.steps:
-        if not step.execution_res:
-            incomplete_step = step
-            break
-
-    if incomplete_step is None:
-        return "PlannerNode"
-    if incomplete_step.step_type == "asset_analysis":
-        return "AssetsAnalzerNode"
-    elif incomplete_step.step_type == "vuln_analysis":
-        return "VulnAnalyzerNode"
-    else:
-        return "PlannerNode"
-    
 def _build_base_graph() -> StateGraph:
     graph = StateGraph(state_schema=NodeState)
 
     graph.add_node("CoordinatorNode", CoordinatorNode)
-    # Skil tirage node for now
-    # graph.add_node("TriageNode", TriageNode)
+    graph.add_node("TriageNode", TriageNode)
     graph.add_node("PlannerNode", PlannerNode)
     graph.add_node("UserFeedbackNode", UserFeedbackNode)
     graph.add_node("WorkerTeamNode", WorkerTeamNode)
+    graph.add_node("PlanRefineNode", PlanRefineNode)
+    
+    # Wrapper nodes for subgraphs
     graph.add_node("AssetsAnalzerNode", AssetsAnalzerNode)
-    graph.add_node("AssetToolNode", asset_tool_node)
-    graph.add_node("VulnAnalyzerNode", VulnAnalyzerNode)
-    graph.add_node("VulnToolNode", vuln_tool_node)
+    graph.add_node("VulnDetailNode", VulnDetailNode)
+    graph.add_node("VulnDiscoveryNode", VulnDiscoveryNode)
+    
     graph.add_node("ReporterNode", ReporterNode)
 
     graph.add_edge(START, "CoordinatorNode")
     graph.add_edge("ReporterNode", END)
-    # graph.add_edge("PlannerNode", "UserFeedbackNode")
-    # UserFeedbackNode uses Command with goto, so no static edges needed
-    # graph.add_edge("UserFeedbackNode", "PlannerNode")
-    # graph.add_edge("UserFeedbackNode", "WorkerTeamNode")
-
-    graph.add_conditional_edges(
-        source="WorkerTeamNode",
-        path=decide_worker_team_goto,
-        path_map=["PlannerNode", "VulnAnalyzerNode", "AssetsAnalzerNode"],
-    )
-
-    graph.add_conditional_edges(
-        source="AssetsAnalzerNode",
-        path=tools_condition,
-        path_map={
-            "tools": "AssetToolNode",
-            "__end__": "WorkerTeamNode",
-        }
-    )
-    graph.add_edge("AssetToolNode", "AssetsAnalzerNode")
-
-    graph.add_conditional_edges(
-        source="VulnAnalyzerNode",
-        path=tools_condition,
-        path_map={
-            "tools": "VulnToolNode",
-            "__end__": "WorkerTeamNode",
-        }
-    )
-    graph.add_edge("VulnToolNode", "VulnAnalyzerNode")
-
+    
+    # Note: Most transitions are now handled by Command(goto=...) in the nodes.
+    # We don't need explicit edges for those.
+    
     return graph
+
 
 
 compiled_graph: CompiledStateGraph | None = None
