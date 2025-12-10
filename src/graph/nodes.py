@@ -15,9 +15,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from settings import settings
-from graph.subgraphs.asset_analysis import asset_analysis_subgraph
-from graph.subgraphs.vuln_detail import vuln_detail_subgraph
-from graph.subgraphs.vuln_discovery import vuln_discovery_subgraph
+from graph.subgraphs.asset_analysis import asset_analysis_subgraph, AssetSubState
+from graph.subgraphs.vuln_detail import vuln_detail_subgraph, VulnDetailSubState
+from graph.subgraphs.vuln_discovery import vuln_discovery_subgraph, VulnDiscoverySubState
 
 # Configuration for parallel execution
 STEP_CONFIG = {
@@ -439,7 +439,7 @@ def AssetsAnalzerNode(state: NodeState):
         return Command(goto="WorkerTeamNode")
         
     # Invoke subgraph
-    sub_state = {
+    sub_state: AssetSubState = {
         "messages": [], # Isolated messages
         "step": step,
         "result": None
@@ -471,7 +471,7 @@ def VulnDiscoveryNode(state: NodeState):
         logger.error(f"Step {step_id} not found in plan")
         return Command(goto="WorkerTeamNode")
         
-    sub_state = {
+    sub_state: VulnDiscoverySubState = {
         "messages": [],
         "step": step,
         "result": None
@@ -503,7 +503,7 @@ def VulnDetailNode(state: NodeState):
         logger.error(f"Step {step_id} not found in plan")
         return Command(goto="WorkerTeamNode")
         
-    sub_state = {
+    sub_state: VulnDetailSubState = {
         "messages": [],
         "step": step,
         "result": None

@@ -1,6 +1,6 @@
 from typing import TypedDict, List, Optional, Any
 import json
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, AIMessage
 from schemas.plans import Step, extract_json_from_text
@@ -8,8 +8,7 @@ from tools.vuln_tools import vuln_tools
 from models import get_model_by_type
 from prompts.template import apply_prompt_template
 
-class VulnDiscoverySubState(TypedDict):
-    messages: List[BaseMessage]
+class VulnDiscoverySubState(MessagesState):
     step: Step
     result: Optional[dict] # {"cve_ids": List[str], "summary": str}
 

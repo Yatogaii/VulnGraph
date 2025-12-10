@@ -1,5 +1,5 @@
 from typing import TypedDict, List, Optional, Any
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, AIMessage
 from schemas.plans import Step
@@ -8,8 +8,7 @@ from tools.vuln_tools import vuln_tools
 from models import get_model_by_type
 from prompts.template import apply_prompt_template
 
-class VulnDetailSubState(TypedDict):
-    messages: List[BaseMessage]
+class VulnDetailSubState(MessagesState):
     step: Step
     result: Optional[dict] # {"execution_res": str, "vulns": List[Vuln]}
 
