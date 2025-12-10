@@ -2,6 +2,7 @@ from graph.state import NodeState, preserve_state_meta_fields
 from schemas.plans import parse_plan_from_llm, Plan, Step
 from schemas.vulns import Vuln, ImpactedSoftware, parse_vulns_from_llm
 from typing import Annotated, Any
+import time
 from prompts.template import apply_prompt_template
 from models import get_model_by_type
 from logger import logger
@@ -204,24 +205,36 @@ def PlannerNode(state: NodeState):
     # Check for tool calls to end planning
     goto = "PlannerNode"
     plan_review_status = state.get("plan_review_status")
+    
+    updates = {
+        "plan_iterations": plan_iterations,
+        "plan": plan,
+        "plan_review_status": plan_review_status,
+        "plan_review_comment": None if plan_review_status == "pending" else state.get("plan_review_comment"),
+    }
+
     if isinstance(plan, Plan):
         if plan.has_enough_context:
             goto = "ReporterNode"
-            plan_review_status = None
+            updates["plan_review_status"] = None
         elif plan.finish_plan:
-            # 计划完成但缺少上下文，先让用户确认
-            goto = "UserFeedbackNode"
-            plan_review_status = "pending"
+            if settings.enable_hitl:
+                # 计划完成但缺少上下文，先让用户确认
+                goto = "UserFeedbackNode"
+                updates["plan_review_status"] = "pending"
+                updates["plan_review_comment"] = None
+            else:
+                # Skip HITL, auto-approve
+                logger.info("HITL disabled, auto-approving plan")
+                goto = "WorkerTeamNode"
+                updates["plan_review_status"] = "approved"
+                updates["status"] = "plan_approved"
+                updates["execution_start_time"] = time.time()
         else:
             goto = "PlannerNode"
     
     return Command(
-        update={
-            "plan_iterations": plan_iterations,
-            "plan": plan,
-            "plan_review_status": plan_review_status,
-            "plan_review_comment": None if plan_review_status == "pending" else state.get("plan_review_comment"),
-        },
+        update=updates,
         goto=goto,
     )
 
@@ -254,6 +267,7 @@ def UserFeedbackNode(state: NodeState):
                 "plan_review_status": "approved",
                 "plan_review_comment": comment,
                 "status": "plan_approved",
+                "execution_start_time": time.time(),
             },
             goto="WorkerTeamNode",
         )
@@ -397,8 +411,9 @@ def WorkerTeamNode(state: NodeState):
     
     for step in runnable_at_stage:
         config = STEP_CONFIG.get(step.step_type, {"parallel": False})
+        is_parallel = config["parallel"] and settings.enable_parallel_execution
         
-        if config["parallel"]:
+        if is_parallel:
             node_name = _node_for_step_type(step.step_type)
             jobs.append(Send(node_name, {"step_id": step.id}))
         else:
@@ -590,6 +605,11 @@ Please generate a comprehensive security report based on the above findings.
     
     logger.info(f"ReporterNode: Generated report with {len(final_report)} characters")
     
+    start_time = state.get("execution_start_time")
+    if start_time:
+        duration = time.time() - start_time
+        logger.info(f"Task Execution Time (excluding HITL): {duration:.2f} seconds")
+
     return Command(
         update={
             "final_report": final_report,

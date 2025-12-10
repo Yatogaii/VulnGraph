@@ -22,6 +22,7 @@ class NodeState(MessagesState):
     plan_review_status: Optional[str]
     plan_review_comment: Optional[str]
 
+    execution_start_time: Optional[float]
     final_report: str
     
 def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
@@ -42,5 +43,6 @@ def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
         "plan_iterations": state["plan_iterations"],
         "plan_review_status": state.get("plan_review_status"),
         "plan_review_comment": state.get("plan_review_comment"),
+        "execution_start_time": state.get("execution_start_time"),
         "final_report": state["final_report"],
     }

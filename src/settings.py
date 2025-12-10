@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     enable_background_investigation: bool = True
     enable_clarification: Optional[bool] = None
     max_clarification_rounds: Optional[int] = None
+    enable_parallel_execution: bool = True
+    enable_hitl: bool = True
 
     # --- API keys ---
     KIMI_API_KEY: str = ""
