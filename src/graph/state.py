@@ -25,6 +25,9 @@ class NodeState(MessagesState):
     execution_start_time: Optional[float]
     final_report: str
     
+    # Temporary field for parallel execution
+    step_id: Optional[str]
+    
 def preserve_state_meta_fields(state: NodeState) -> dict[str, Any]:
     """Return a dict with the NodeState meta fields preserved in 'key': value format.
 

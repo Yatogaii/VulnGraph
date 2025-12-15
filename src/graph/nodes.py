@@ -424,12 +424,12 @@ def WorkerTeamNode(state: NodeState):
     # 5. Dispatch
     if jobs:
         logger.info(f"WorkerTeamNode: Dispatching {len(jobs)} parallel jobs")
-        return jobs
+        return Command(goto=jobs)
         
     if serial_step:
         node_name = _node_for_step_type(serial_step.step_type)
         logger.info(f"WorkerTeamNode: Dispatching serial job: {serial_step.id} ({node_name})")
-        return [Send(node_name, {"step_id": serial_step.id})]
+        return Command(goto=[Send(node_name, {"step_id": serial_step.id})])
         
     return Command(goto="TriageNode")
 
