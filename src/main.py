@@ -3,19 +3,19 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
-import os
-from datetime import datetime
 from aiohttp import web
 from logger import logger
 
 from workflow import run_agent_workflow_async, get_run_state, get_run_state_async
 from settings import settings
-from graph.builder import CHECKPOINTS_DB
-
-RUN_IDS_LOG = os.path.join(os.path.dirname(__file__), "run_ids.log")
+from run_registry import record_run_id, list_run_ids, clear_run_ids
 
 
-async def start_agent_workflow(user_input: str, run_id: str | None = None) -> str:
+async def start_agent_workflow(
+    user_input: str,
+    run_id: str | None = None,
+    event_sink=None,
+) -> str:
     """启动异步工作流程，返回使用的 run_id。"""
     run_id = run_id or uuid.uuid4().hex
     logger.info("Starting agent workflow run_id={} input: {}", run_id, user_input)
@@ -28,9 +28,11 @@ async def start_agent_workflow(user_input: str, run_id: str | None = None) -> st
         enable_background_investigation=settings.enable_background_investigation,
         enable_clarification=settings.enable_clarification,
         max_clarification_rounds=settings.max_clarification_rounds,
+        event_sink=event_sink,
     )
-    _record_run_id(run_id, user_input)
+    record_run_id(run_id, user_input)
     return run_id
+
 
 async def create_stdin_reader() -> asyncio.StreamReader:
     """创建一个异步的 stdin reader，可被取消。"""
@@ -90,61 +92,6 @@ def _parse_run_command(text: str) -> tuple[str | None, str]:
     if len(parts) >= 3 and parts[0].lower() == "run":
         return parts[1], parts[2]
     return None, text
-
-
-def _record_run_id(run_id: str, user_input: str) -> None:
-    """Append run_id to a local log for later listing."""
-    try:
-        os.makedirs(os.path.dirname(RUN_IDS_LOG), exist_ok=True)
-        ts = datetime.utcnow().isoformat()
-        with open(RUN_IDS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{ts}\t{run_id}\t{user_input}\n")
-    except Exception as e:
-        logger.error("Failed to record run_id {}: {}", run_id, e)
-
-
-def list_run_ids(limit: int = 50) -> list[dict[str, str]]:
-    """Return the latest run_ids with timestamps and queries (most recent last)."""
-    if not os.path.exists(RUN_IDS_LOG):
-        return []
-    try:
-        with open(RUN_IDS_LOG, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except Exception as e:
-        logger.error("Failed to read run_id log: {}", e)
-        return []
-
-    lines = lines[-limit:]
-    entries = []
-    for line in lines:
-        parts = line.rstrip("\n").split("\t", 2)
-        if len(parts) == 3:
-            ts, rid, query = parts
-            entries.append({"timestamp": ts, "run_id": rid, "query": query})
-    return entries
-
-
-def clear_run_ids() -> None:
-    """Clear the run_ids log file and sqlite checkpoints."""
-    try:
-        # Clear log file
-        if os.path.exists(RUN_IDS_LOG):
-            os.remove(RUN_IDS_LOG)
-            logger.info("Cleared run_ids log")
-        
-        # Clear sqlite checkpoints
-        db_path = str(CHECKPOINTS_DB)
-        # Remove main db file and potential wal/shm files
-        for path in [db_path, f"{db_path}-wal", f"{db_path}-shm"]:
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                    logger.info(f"Removed checkpoint file: {path}")
-                except OSError as e:
-                    logger.warning(f"Could not remove {path}: {e}")
-
-    except Exception as e:
-        logger.error("Failed to clear run data: {}", e)
 
 
 async def handle_stdin_command(text: str) -> None:

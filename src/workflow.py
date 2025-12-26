@@ -3,7 +3,7 @@ import os
 import uuid
 import copy
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Callable, cast
 from graph.state import NodeState
 from graph.builder import get_graph
 from langchain_core.runnables.config import RunnableConfig
@@ -17,6 +17,8 @@ from langchain_core.load.serializable import Serializable
 from pydantic import BaseModel
 
 console = Console()
+
+EventSink = Callable[[Any], None]
 
 # 报告输出目录
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
@@ -73,6 +75,20 @@ async def get_run_state_async(run_id: str) -> NodeState | None:
     return None
 
 
+def _emit(renderable: Any, event_sink: EventSink | None) -> None:
+    if event_sink is not None:
+        event_sink(renderable)
+        return
+    console.print(renderable)
+
+
+def _render_for_emit(obj: Any) -> Any:
+    serialized = _serialize_for_print(obj)
+    if isinstance(serialized, str):
+        return serialized
+    return Pretty(serialized)
+
+
 async def run_agent_workflow_async(
     user_input: str,
     run_id: str | None = None,
@@ -84,6 +100,7 @@ async def run_agent_workflow_async(
     max_clarification_rounds: int | None = None,
     initial_state: NodeState | None = None,
     resume_value: dict | None = None,
+    event_sink: EventSink | None = None,
 ) -> None:
     # allow caller-provided run_id; fall back to state-provided or fresh uuid
     if initial_state is not None:
@@ -134,34 +151,35 @@ async def run_agent_workflow_async(
                     last_message_cnt = len(s["messages"])
                     message = s["messages"][-1]
                     if isinstance(message, tuple):
-                        console.print(Pretty(message))
+                        _emit(Pretty(message), event_sink)
                     else:
                         # Prefer a structured print for message objects (langchain messages
-                        # often inherit from Serializable). Fall back to pretty_print for
-                        # runtime rendering when available.
+                        # often inherit from Serializable). For CLI, keep pretty_print.
+                        if event_sink is None and hasattr(message, "pretty_print"):
+                            try:
+                                message.pretty_print()
+                                continue
+                            except Exception:
+                                pass
                         try:
-                            serial = _serialize_for_print(message)
+                            _emit(_render_for_emit(message), event_sink)
                         except Exception:
-                            # fallback to the existing method which prints nicely in
-                            # interactive environments
-                            message.pretty_print()
-                        else:
-                            console.print(Pretty(serial))
+                            _emit(repr(message), event_sink)
                 else:
-                    console.print(Pretty(_serialize_for_print(s)))
+                    _emit(_render_for_emit(s), event_sink)
 
                 # 如果等待用户审批，立即返回，留给外部触发恢复
                 # Check for interrupt signal
                 if isinstance(s, dict) and "__interrupt__" in s:
-                     console.print("[yellow]Workflow interrupted. Waiting for user input.[/yellow]")
+                     _emit("[yellow]Workflow interrupted. Waiting for user input.[/yellow]", event_sink)
                      logger.info(f"Run {run_id} interrupted")
                      return
 
             except Exception as e:
-                console.print(f"Error processing output: {str(e)}")
+                _emit(f"Error processing output: {str(e)}", event_sink)
     except Exception as e:
         logger.exception(f"Workflow execution failed for run_id={run_id}: {e}")
-        console.print(f"[red]Workflow execution failed: {e}[/red]")
+        _emit(f"[red]Workflow execution failed: {e}[/red]", event_sink)
         raise
     
     # 保存最终报告到 markdown 文件
@@ -177,10 +195,10 @@ async def run_agent_workflow_async(
         if final_report:
             try:
                 report_path = _save_report_to_markdown(final_report, user_input)
-                console.print(f"\n[green]✓ Report saved to: {report_path}[/green]")
+                _emit(f"\n[green]✓ Report saved to: {report_path}[/green]", event_sink)
                 logger.info(f"Report saved to: {report_path}")
             except Exception as e:
-                console.print(f"[red]Failed to save report: {str(e)}[/red]")
+                _emit(f"[red]Failed to save report: {str(e)}[/red]", event_sink)
                 logger.error(f"Failed to save report: {str(e)}")
 
 
@@ -226,4 +244,3 @@ def _serialize_for_print(obj: Any) -> Any:
         return str(obj)
     except Exception:
         return repr(obj)
-
